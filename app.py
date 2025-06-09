@@ -25,6 +25,7 @@ from rich.panel import Panel
 from options.remover import Remover
 from options.add_or_mescle import AddOrMescle
 from options.filters import Filters
+from options.banco_nomes import BancoNomes
 
 class SmartFiler:
     def __init__(self):
@@ -32,6 +33,7 @@ class SmartFiler:
         self.remover = Remover()
         self.add_or_mescle = AddOrMescle()
         self.filters = Filters()
+        self.banco_nomes = BancoNomes()
 
     def menu_principal(self):
         """Cria o menu principal dinâmico usando InquirerPy"""
@@ -41,7 +43,8 @@ class SmartFiler:
                 Choice("1", name="Remover Dados"),
                 Choice("2", name="Filtrar Dados"),
                 Choice("3", name="Adicionar/Mesclar Dados"),
-                Choice("4", name="Sair"),
+                Choice("4", name="Adicionar Nomes de Bancos"),
+                Choice("5", name="Sair"),
             ],
         ).execute()
 
@@ -62,6 +65,8 @@ class SmartFiler:
                 self.filters.executar()
             elif opcao == "3":
                 self.add_or_mescle.executar()
+            elif opcao == "4":
+                self.banco_nomes.executar()
             else:
                 self.console.print("[red]Saindo do programa...[/red]")
                 break

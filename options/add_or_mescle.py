@@ -71,13 +71,59 @@ class AddOrMescle:
             except:
                 return pd.read_csv(caminho, sep=',', encoding='utf-8')
 
-    def salvar_arquivo(self, df, caminho, prefixo):
+    def salvar_arquivo(self, df, caminho, prefixo, pasta_saida=None):
         """Salva arquivo CSV com prefixo"""
         nome_arquivo = os.path.basename(caminho)
         nome_base = os.path.splitext(nome_arquivo)[0]
-        caminho_saida = os.path.join(os.path.dirname(caminho), f"{prefixo}{nome_base}.csv")
-        df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
-        return caminho_saida
+        pasta_para_salvar = pasta_saida if pasta_saida else os.path.dirname(caminho)
+        caminho_saida = os.path.join(pasta_para_salvar, f"{prefixo}{nome_base}.csv")
+        
+        while True:
+            try:
+                df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+                return caminho_saida
+            except PermissionError:
+                self.console.print(Panel(
+                    f"[red]Erro de Permissão![/red]\n\n"
+                    f"Não foi possível salvar o arquivo:\n"
+                    f"{caminho_saida}\n\n"
+                    f"[yellow]Possíveis causas:[/yellow]\n"
+                    f"• O arquivo está aberto no Excel ou outro programa\n"
+                    f"• Sem permissão de escrita na pasta\n"
+                    f"• Arquivo protegido contra escrita\n\n"
+                    f"[cyan]Por favor:[/cyan]\n"
+                    f"1. Feche todos os arquivos relacionados\n"
+                    f"2. Verifique as permissões da pasta\n"
+                    f"3. Tente novamente",
+                    title="Erro de Permissão",
+                    border_style="red"
+                ))
+                
+                # Pergunta se quer tentar novamente ou escolher nova pasta
+                opcao = inquirer.select(
+                    message="O que deseja fazer?",
+                    choices=[
+                        Choice("1", name="Tentar salvar novamente no mesmo local"),
+                        Choice("2", name="Escolher nova pasta para salvar"),
+                    ],
+                ).execute()
+                
+                if opcao == "2":
+                    nova_pasta = self.selecionar_pasta_saida("Selecione uma nova pasta para salvar o arquivo:")
+                    pasta_para_salvar = nova_pasta
+                    caminho_saida = os.path.join(pasta_para_salvar, f"{prefixo}{nome_base}.csv")
+            except Exception as e:
+                self.console.print(Panel(
+                    f"[red]Erro inesperado ao salvar arquivo:[/red]\n\n"
+                    f"Erro: {str(e)}\n\n"
+                    f"[cyan]Por favor, tente escolher uma nova pasta.[/cyan]",
+                    title="Erro",
+                    border_style="red"
+                ))
+                
+                nova_pasta = self.selecionar_pasta_saida("Selecione uma nova pasta para salvar o arquivo:")
+                pasta_para_salvar = nova_pasta
+                caminho_saida = os.path.join(pasta_para_salvar, f"{prefixo}{nome_base}.csv")
 
     def unir_colunas_por_cpf(self):
         """Une colunas de dois arquivos CSV pelo CPF"""
@@ -126,8 +172,8 @@ class AddOrMescle:
         
         # Salva arquivos
         pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar os arquivos:")
-        caminho_com_corresp = self.salvar_arquivo(df_com_corresp, arquivo_base, "comcorresp_")
-        caminho_sem_corresp = self.salvar_arquivo(df_sem_corresp, arquivo_base, "semcorresp_")
+        caminho_com_corresp = self.salvar_arquivo(df_com_corresp, arquivo_base, "comcorresp_", pasta_saida)
+        caminho_sem_corresp = self.salvar_arquivo(df_sem_corresp, arquivo_base, "semcorresp_", pasta_saida)
         
         # Cria mensagem detalhada
         mensagem = (

@@ -58,8 +58,53 @@ class Filters:
         nome_arquivo = os.path.basename(caminho)
         nome_base = os.path.splitext(nome_arquivo)[0]
         caminho_saida = os.path.join(pasta_saida, f"{prefixo}_{indice}_{nome_base}.csv")
-        df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
-        return caminho_saida
+        
+        while True:
+            try:
+                df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+                return caminho_saida
+            except PermissionError:
+                self.console.print(Panel(
+                    f"[red]Erro de Permissão![/red]\n\n"
+                    f"Não foi possível salvar o arquivo:\n"
+                    f"{caminho_saida}\n\n"
+                    f"[yellow]Possíveis causas:[/yellow]\n"
+                    f"• O arquivo está aberto no Excel ou outro programa\n"
+                    f"• Sem permissão de escrita na pasta\n"
+                    f"• Arquivo protegido contra escrita\n\n"
+                    f"[cyan]Por favor:[/cyan]\n"
+                    f"1. Feche todos os arquivos relacionados\n"
+                    f"2. Verifique as permissões da pasta\n"
+                    f"3. Tente novamente",
+                    title="Erro de Permissão",
+                    border_style="red"
+                ))
+                
+                # Pergunta se quer tentar novamente ou escolher nova pasta
+                opcao = inquirer.select(
+                    message="O que deseja fazer?",
+                    choices=[
+                        Choice("1", name="Tentar salvar novamente no mesmo local"),
+                        Choice("2", name="Escolher nova pasta para salvar"),
+                    ],
+                ).execute()
+                
+                if opcao == "2":
+                    nova_pasta = self.selecionar_pasta_saida("Selecione uma nova pasta para salvar o arquivo:")
+                    pasta_saida = nova_pasta
+                    caminho_saida = os.path.join(pasta_saida, f"{prefixo}_{indice}_{nome_base}.csv")
+            except Exception as e:
+                self.console.print(Panel(
+                    f"[red]Erro inesperado ao salvar arquivo:[/red]\n\n"
+                    f"Erro: {str(e)}\n\n"
+                    f"[cyan]Por favor, tente escolher uma nova pasta.[/cyan]",
+                    title="Erro",
+                    border_style="red"
+                ))
+                
+                nova_pasta = self.selecionar_pasta_saida("Selecione uma nova pasta para salvar o arquivo:")
+                pasta_saida = nova_pasta
+                caminho_saida = os.path.join(pasta_saida, f"{prefixo}_{indice}_{nome_base}.csv")
 
     def dividir_arquivo(self):
         """Divide um arquivo em partes de tamanho específico"""
