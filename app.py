@@ -16,6 +16,9 @@ Dependências:
 - rich
 - pandas
 - openpyxl
+- selenium
+- beautifulsoup4
+- requests
 """
 
 from InquirerPy import inquirer
@@ -26,6 +29,13 @@ from options.remover import Remover
 from options.add_or_mescle import AddOrMescle
 from options.filters import Filters
 from options.banco_nomes import BancoNomes
+from options.converter import Converter
+from options.web_downloader import WebDownloader
+from options.extrator_cnpj import ExtratorCNPJ
+from options.txt_to_csv import TxtToCsv
+from options.juntar_csv_cnpj import JuntarCsvCnpj
+from options.moves_copys import MovesCopys
+from options.correlacao_colunas import CorrelacaoColunas
 
 class SmartFiler:
     def __init__(self):
@@ -34,6 +44,13 @@ class SmartFiler:
         self.add_or_mescle = AddOrMescle()
         self.filters = Filters()
         self.banco_nomes = BancoNomes()
+        self.converter = Converter()
+        self.web_downloader = WebDownloader()
+        self.extrator_cnpj = ExtratorCNPJ()
+        self.txt_to_csv = TxtToCsv()
+        self.juntar_csv_cnpj = JuntarCsvCnpj()
+        self.moves_copys = MovesCopys()
+        self.correlacao_colunas = CorrelacaoColunas()
 
     def menu_principal(self):
         """Cria o menu principal dinâmico usando InquirerPy"""
@@ -44,7 +61,34 @@ class SmartFiler:
                 Choice("2", name="Filtrar Dados"),
                 Choice("3", name="Adicionar/Mesclar Dados"),
                 Choice("4", name="Adicionar Nomes de Bancos"),
-                Choice("5", name="Sair"),
+                Choice("5", name="Converter Arquivos"),
+                Choice("6", name="Baixar Arquivos de Sites"),
+                Choice("7", name="Extrair CNPJs"),
+                Choice("8", name="Converter TXT para CSV"),
+                Choice("9", name="Juntar CSV através da coluna CNPJ"),
+                Choice("10", name="Moves && Copys"),
+                Choice("11", name="Correlacionar Colunas"),
+                Choice("12", name="Sair"),
+            ],
+        ).execute()
+
+    def menu_conversao_arquivos(self):
+        """Menu de conversão de arquivos"""
+        return inquirer.select(
+            message="Selecione uma operação de conversão:",
+            choices=[
+                Choice("1", name="Converter Arquivos"),
+                Choice("2", name="Voltar ao menu principal"),
+            ],
+        ).execute()
+
+    def menu_download_arquivos(self):
+        """Menu de download de arquivos"""
+        return inquirer.select(
+            message="Selecione uma operação de download:",
+            choices=[
+                Choice("1", name="Baixar Arquivos de Sites"),
+                Choice("2", name="Voltar ao menu principal"),
             ],
         ).execute()
 
@@ -67,6 +111,20 @@ class SmartFiler:
                 self.add_or_mescle.executar()
             elif opcao == "4":
                 self.banco_nomes.executar()
+            elif opcao == "5":
+                self.converter.executar()
+            elif opcao == "6":
+                self.web_downloader.executar()
+            elif opcao == "7":
+                self.extrator_cnpj.executar()
+            elif opcao == "8":
+                self.txt_to_csv.executar()
+            elif opcao == "9":
+                self.juntar_csv_cnpj.executar()
+            elif opcao == "10":
+                self.moves_copys.executar()
+            elif opcao == "11":
+                self.correlacao_colunas.executar()
             else:
                 self.console.print("[red]Saindo do programa...[/red]")
                 break
