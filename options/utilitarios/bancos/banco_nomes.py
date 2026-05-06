@@ -128,6 +128,8 @@ class BancoNomes:
         """Permite ao usuário selecionar uma pasta com arquivos CSV"""
         return inquirer.filepath(
             message=mensagem,
+            only_directories=True,
+            validate=lambda x: os.path.isdir(x.strip()) or "Caminho inválido: selecione uma pasta, não um arquivo",
             filter=lambda x: x.strip(),
         ).execute()
 

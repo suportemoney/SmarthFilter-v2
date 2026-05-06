@@ -14,6 +14,8 @@ from rich.panel import Panel
 import os
 import math
 import glob
+import csv
+import re
 
 class Filters:
     def __init__(self):
@@ -80,21 +82,34 @@ class Filters:
             filter=lambda x: x.strip(),
         ).execute()
 
-    def carregar_arquivo(self, caminho):
-        """Carrega arquivo CSV ou XLSX"""
+    def carregar_arquivo(self, caminho, dtype=None):
+        """Carrega arquivo CSV ou XLSX. dtype=str força todas as colunas como string (evita perder zeros em CNPJ etc.)."""
         if caminho.endswith('.xlsx'):
             return pd.read_excel(caminho)
         else:
-            try:
-                return pd.read_csv(caminho, sep=';', encoding='utf-8')
-            except:
-                try:
-                    return pd.read_csv(caminho, sep=',', encoding='utf-8')
-                except:
+            kw = dict(quoting=csv.QUOTE_MINIMAL, doublequote=True, keep_default_na=False, header=0, on_bad_lines='warn')
+            if dtype is not None:
+                kw['dtype'] = dtype
+            melhor_df = None
+            melhor_num_colunas = 0
+            for sep in [';', ',']:
+                for encoding in ['utf-8', 'latin-1']:
                     try:
-                        return pd.read_csv(caminho, sep=';', encoding='latin-1')
+                        df = pd.read_csv(caminho, sep=sep, encoding=encoding, **kw)
+                        num_colunas = len(df.columns)
+                        if num_colunas > melhor_num_colunas:
+                            melhor_df = df
+                            melhor_num_colunas = num_colunas
+                            if num_colunas > 1:
+                                return melhor_df
                     except:
-                        return pd.read_csv(caminho, sep=',', encoding='latin-1')
+                        continue
+            if melhor_df is not None:
+                return melhor_df
+            try:
+                return pd.read_csv(caminho, encoding='utf-8', **kw)
+            except:
+                return pd.read_csv(caminho, encoding='latin-1', **kw)
 
     def carregar_csv_blacklist(self, caminho):
         """Carrega arquivo CSV de blacklist com diferentes encodings"""
@@ -709,13 +724,17 @@ class Filters:
             choices=[
                 Choice(5000, name="5.000 linhas"),
                 Choice(10000, name="10.000 linhas"),
+                Choice(15000, name="15.000 linhas"),
+                Choice(20000, name="20.000 linhas"),
                 Choice(30000, name="30.000 linhas"),
+                Choice(50000, name="50.000 linhas"),
+                Choice(80000, name="80.000 linhas"),
                 Choice(100000, name="100.000 linhas"),
                 Choice(150000, name="150.000 linhas"),
                 Choice(200000, name="200.000 linhas"),
-                Choice(250000, name="250.000 linhas"),
                 Choice(300000, name="300.000 linhas"),
                 Choice(500000, name="500.000 linhas"),
+                Choice(1000000, name="1.000.000 linhas"),
             ],
         ).execute()
         
@@ -1282,6 +1301,960 @@ class Filters:
                 border_style="red"
             ))
 
+    def formatar_coluna_data(self):
+        """Formata e normaliza coluna de data para dd/MM/AAAA"""
+        # Seleciona arquivo
+        arquivo = self.selecionar_arquivo("Selecione o arquivo CSV para processar:")
+        
+        # Carrega arquivo
+        try:
+            df = self.carregar_arquivo(arquivo)
+            total_linhas_original = len(df)
+            
+            if total_linhas_original == 0:
+                self.console.print(Panel(
+                    "[red]O arquivo está vazio![/red]",
+                    title="Erro",
+                    border_style="red"
+                ))
+                return
+                
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+        
+        # Mostra informações do arquivo
+        self.console.print(Panel(
+            f"[green]Arquivo carregado com sucesso![/green]\n"
+            f"Total de registros: {total_linhas_original:,}\n"
+            f"Total de colunas: {len(df.columns)}",
+            title="Arquivo Carregado",
+            border_style="green"
+        ))
+        
+        # Seleciona coluna de data
+        coluna_data = self.selecionar_coluna(
+            df, 
+            "Selecione a coluna que contém a data:"
+        )
+        
+        # Mostra alguns exemplos da coluna selecionada
+        exemplos = df[coluna_data].dropna().head(5).tolist()
+        self.console.print(Panel(
+            f"[cyan]Exemplos de datas na coluna '{coluna_data}':[/cyan]\n" +
+            "\n".join([f"• {str(exemplo)}" for exemplo in exemplos]),
+            title="Exemplos de Datas",
+            border_style="cyan"
+        ))
+        
+        # Confirma se quer continuar
+        continuar = inquirer.confirm(
+            message=f"Deseja continuar e formatar a coluna '{coluna_data}' para dd/MM/AAAA?",
+            default=True,
+        ).execute()
+        
+        if not continuar:
+            self.console.print("[yellow]Operação cancelada pelo usuário.[/yellow]")
+            return
+        
+        # Formata datas
+        self.console.print("[cyan]Formatando datas...[/cyan]")
+        
+        def formatar_data_para_dd_mm_aaaa(valor):
+            """Formata data para dd/MM/AAAA"""
+            if pd.isna(valor) or valor == '' or str(valor).strip() == '':
+                return ''
+            
+            try:
+                valor_str = str(valor).strip()
+                
+                # Tenta diferentes formatos de entrada
+                formatos_entrada = [
+                    '%Y-%m-%d %H:%M:%S',  # 1952-08-17 00:00:00
+                    '%Y-%m-%d',          # 1952-08-17
+                    '%d/%m/%Y',          # 17/08/1952
+                    '%d/%m/%Y %H:%M:%S', # 17/08/1952 00:00:00
+                    '%d-%m-%Y',          # 17-08-1952
+                    '%Y/%m/%d',          # 1952/08/17
+                ]
+                
+                # Tenta converter usando pandas to_datetime primeiro
+                try:
+                    data = pd.to_datetime(valor_str, errors='coerce')
+                    if pd.notna(data):
+                        return data.strftime('%d/%m/%Y')
+                except:
+                    pass
+                
+                # Tenta cada formato manualmente
+                from datetime import datetime
+                for formato in formatos_entrada:
+                    try:
+                        data = datetime.strptime(valor_str, formato)
+                        return data.strftime('%d/%m/%Y')
+                    except:
+                        continue
+                
+                # Se não conseguir converter, retorna o valor original
+                return valor_str
+                
+            except Exception as e:
+                return str(valor)
+        
+        # Aplica formatação
+        df[coluna_data] = df[coluna_data].apply(formatar_data_para_dd_mm_aaaa)
+        
+        # Estatísticas da formatação
+        datas_formatadas = df[coluna_data].notna().sum()
+        datas_vazias = df[coluna_data].isna().sum()
+        
+        # Mostra alguns exemplos após formatação
+        exemplos_formatados = df[coluna_data].dropna().head(5).tolist()
+        self.console.print(Panel(
+            f"[green]Datas formatadas com sucesso![/green]\n"
+            f"├─ Datas formatadas: {datas_formatadas:,}\n"
+            f"├─ Datas vazias: {datas_vazias:,}\n\n"
+            f"[cyan]Exemplos após formatação:[/cyan]\n" +
+            "\n".join([f"• {exemplo}" for exemplo in exemplos_formatados]),
+            title="Formatação Concluída",
+            border_style="green"
+        ))
+        
+        # Seleciona pasta para salvar
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo formatado:")
+        
+        # Salva arquivo formatado
+        nome_arquivo = os.path.basename(arquivo)
+        nome_base = os.path.splitext(nome_arquivo)[0]
+        caminho_saida = os.path.join(pasta_saida, f"formatado_{nome_base}.csv")
+        
+        try:
+            # Trata colunas numéricas que devem permanecer como string
+            df = self.tratar_colunas_numericas(df.copy())
+            
+            df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+            
+            self.console.print(Panel(
+                f"[green]Arquivo salvo com sucesso![/green]\n"
+                f"├─ Arquivo original: {nome_arquivo}\n"
+                f"├─ Arquivo processado: formatado_{nome_base}.csv\n"
+                f"├─ Total de registros: {total_linhas_original:,}\n"
+                f"├─ Datas formatadas: {datas_formatadas:,}\n"
+                f"└─ Local: {caminho_saida}",
+                title="Processamento Concluído",
+                border_style="green"
+            ))
+            
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao salvar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+
+    def calcular_idade_data(self):
+        """Calcula idade com base na data de nascimento e adiciona coluna 'idade'"""
+        from datetime import date
+        
+        # Seleciona arquivo
+        arquivo = self.selecionar_arquivo("Selecione o arquivo CSV para processar:")
+        
+        # Carrega arquivo
+        try:
+            df = self.carregar_arquivo(arquivo)
+            total_linhas_original = len(df)
+            
+            if total_linhas_original == 0:
+                self.console.print(Panel(
+                    "[red]O arquivo está vazio![/red]",
+                    title="Erro",
+                    border_style="red"
+                ))
+                return
+                
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+        
+        # Mostra informações do arquivo
+        self.console.print(Panel(
+            f"[green]Arquivo carregado com sucesso![/green]\n"
+            f"Total de registros: {total_linhas_original:,}\n"
+            f"Total de colunas: {len(df.columns)}",
+            title="Arquivo Carregado",
+            border_style="green"
+        ))
+        
+        # Seleciona coluna de data de nascimento
+        coluna_data = self.selecionar_coluna(
+            df, 
+            "Selecione a coluna que contém a data de nascimento:"
+        )
+        
+        # Mostra alguns exemplos da coluna selecionada
+        exemplos = df[coluna_data].dropna().head(5).tolist()
+        self.console.print(Panel(
+            f"[cyan]Exemplos de datas na coluna '{coluna_data}':[/cyan]\n" +
+            "\n".join([f"• {str(exemplo)}" for exemplo in exemplos]),
+            title="Exemplos de Datas",
+            border_style="cyan"
+        ))
+        
+        # Confirma se quer continuar
+        continuar = inquirer.confirm(
+            message=f"Deseja continuar e calcular idade baseada na coluna '{coluna_data}'?",
+            default=True,
+        ).execute()
+        
+        if not continuar:
+            self.console.print("[yellow]Operação cancelada pelo usuário.[/yellow]")
+            return
+        
+        # Calcula idade
+        self.console.print("[cyan]Calculando idades...[/cyan]")
+        
+        def calcular_idade_hoje(data_nascimento):
+            """Calcula idade a partir da data de nascimento"""
+            if pd.isna(data_nascimento) or data_nascimento == '' or str(data_nascimento).strip() == '':
+                return None
+            
+            try:
+                # Tenta converter usando pandas to_datetime (mais robusto)
+                data_obj = pd.to_datetime(data_nascimento, errors='coerce', dayfirst=True)
+                
+                if pd.isna(data_obj):
+                    return None
+                
+                # Calcula idade
+                hoje = date.today()
+                idade = hoje.year - data_obj.year - ((hoje.month, hoje.day) < (data_obj.month, data_obj.day))
+                
+                # Verifica se a idade é válida (entre 0 e 150 anos)
+                if 0 <= idade <= 150:
+                    return int(idade)
+                else:
+                    return None
+                    
+            except Exception as e:
+                return None
+        
+        # Aplica cálculo de idade
+        df['idade'] = df[coluna_data].apply(calcular_idade_hoje)
+        
+        # Estatísticas das idades calculadas
+        idades_validas = df['idade'].notna().sum()
+        idades_invalidas = df['idade'].isna().sum()
+        
+        if idades_validas > 0:
+            idade_min = int(df['idade'].min())
+            idade_max = int(df['idade'].max())
+            idade_media = float(df['idade'].mean())
+            
+            self.console.print(Panel(
+                f"[green]Idades calculadas com sucesso![/green]\n"
+                f"├─ Idades válidas: {idades_validas:,}\n"
+                f"├─ Idades inválidas: {idades_invalidas:,}\n"
+                f"├─ Idade mínima: {idade_min} anos\n"
+                f"├─ Idade máxima: {idade_max} anos\n"
+                f"└─ Idade média: {idade_media:.1f} anos",
+                title="Estatísticas das Idades",
+                border_style="green"
+            ))
+        else:
+            self.console.print(Panel(
+                f"[red]Nenhuma idade válida foi calculada![/red]\n"
+                f"Verifique se o formato das datas está correto.",
+                title="Erro no Cálculo",
+                border_style="red"
+            ))
+            return
+        
+        # Seleciona pasta para salvar
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo com idade:")
+        
+        # Salva arquivo com idade
+        nome_arquivo = os.path.basename(arquivo)
+        nome_base = os.path.splitext(nome_arquivo)[0]
+        caminho_saida = os.path.join(pasta_saida, f"com_idade_{nome_base}.csv")
+        
+        try:
+            # Trata colunas numéricas que devem permanecer como string
+            df = self.tratar_colunas_numericas(df.copy())
+            
+            # Garante que a coluna idade seja inteira
+            df['idade'] = df['idade'].astype('Int64')  # Int64 permite NaN
+            
+            df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+            
+            self.console.print(Panel(
+                f"[green]Arquivo salvo com sucesso![/green]\n"
+                f"├─ Arquivo original: {nome_arquivo}\n"
+                f"├─ Arquivo processado: com_idade_{nome_base}.csv\n"
+                f"├─ Total de registros: {total_linhas_original:,}\n"
+                f"├─ Idades calculadas: {idades_validas:,}\n"
+                f"├─ Idades inválidas: {idades_invalidas:,}\n"
+                f"└─ Local: {caminho_saida}",
+                title="Processamento Concluído",
+                border_style="green"
+            ))
+            
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao salvar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+
+    def atualizar_idade_data_nascimento(self):
+        """Usa a coluna de data de nascimento (ex.: NASC) para recalcular e atualizar a coluna de idade."""
+        from datetime import date
+
+        arquivo = self.selecionar_arquivo("Selecione o arquivo CSV para processar:")
+        try:
+            df = self.carregar_arquivo(arquivo)
+            total_linhas = len(df)
+            if total_linhas == 0:
+                self.console.print(Panel("[red]O arquivo está vazio![/red]", title="Erro", border_style="red"))
+                return
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+
+        colunas_lower = {c.strip().lower(): c for c in df.columns}
+        nomes_data = ('nasc', 'data_nascimento', 'data nascimento', 'datanascimento')
+        coluna_data = None
+        for nome in nomes_data:
+            if nome in colunas_lower:
+                coluna_data = colunas_lower[nome]
+                break
+        if coluna_data is None:
+            coluna_data = self.selecionar_coluna(
+                df, "Selecione a coluna de data de nascimento (ex.: NASC):"
+            )
+
+        coluna_idade = None
+        for c in df.columns:
+            if c.strip().lower() in ('idade',):
+                coluna_idade = c
+                break
+        if coluna_idade is None:
+            coluna_idade = 'IDADE'
+
+        def calcular_idade_hoje(data_nascimento):
+            if pd.isna(data_nascimento) or data_nascimento == '' or str(data_nascimento).strip() == '':
+                return None
+            try:
+                data_obj = pd.to_datetime(data_nascimento, errors='coerce', dayfirst=True)
+                if pd.isna(data_obj):
+                    return None
+                hoje = date.today()
+                idade = hoje.year - data_obj.year - ((hoje.month, hoje.day) < (data_obj.month, data_obj.day))
+                if 0 <= idade <= 150:
+                    return int(idade)
+                return None
+            except Exception:
+                return None
+
+        self.console.print("[cyan]Calculando e atualizando idades...[/cyan]")
+        df[coluna_idade] = df[coluna_data].apply(calcular_idade_hoje)
+
+        idades_validas = df[coluna_idade].notna().sum()
+        idades_invalidas = df[coluna_idade].isna().sum()
+
+        if idades_validas > 0:
+            idade_min = int(df[coluna_idade].min())
+            idade_max = int(df[coluna_idade].max())
+            idade_media = float(df[coluna_idade].mean())
+            self.console.print(Panel(
+                f"[green]Idades atualizadas com sucesso![/green]\n"
+                f"├─ Coluna data: {coluna_data}\n"
+                f"├─ Coluna idade: {coluna_idade}\n"
+                f"├─ Idades válidas: {idades_validas:,}\n"
+                f"├─ Idades inválidas: {idades_invalidas:,}\n"
+                f"├─ Idade mínima: {idade_min} anos\n"
+                f"├─ Idade máxima: {idade_max} anos\n"
+                f"└─ Idade média: {idade_media:.1f} anos",
+                title="Estatísticas",
+                border_style="green"
+            ))
+        else:
+            self.console.print(Panel(
+                "[red]Nenhuma idade válida calculada. Verifique o formato das datas.[/red]",
+                title="Erro no Cálculo",
+                border_style="red"
+            ))
+            return
+
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo:")
+        nome_arquivo = os.path.basename(arquivo)
+        caminho_saida = os.path.join(pasta_saida, nome_arquivo)
+
+        try:
+            df = self.tratar_colunas_numericas(df.copy())
+            df[coluna_idade] = df[coluna_idade].astype('Int64')
+            df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+            self.console.print(Panel(
+                f"[green]Arquivo salvo com sucesso![/green]\n"
+                f"├─ Registros: {total_linhas:,}\n"
+                f"└─ {caminho_saida}",
+                title="Processamento Concluído",
+                border_style="green"
+            ))
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao salvar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+
+    def formatar_coluna_cpf(self):
+        """Formata e normaliza coluna de CPF preenchendo zeros à esquerda até 11 dígitos"""
+        # Seleciona arquivo
+        arquivo = self.selecionar_arquivo("Selecione o arquivo CSV para processar:")
+        
+        # Carrega arquivo
+        try:
+            df = self.carregar_arquivo(arquivo)
+            total_linhas_original = len(df)
+            
+            if total_linhas_original == 0:
+                self.console.print(Panel(
+                    "[red]O arquivo está vazio![/red]",
+                    title="Erro",
+                    border_style="red"
+                ))
+                return
+                
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+        
+        # Mostra informações do arquivo
+        self.console.print(Panel(
+            f"[green]Arquivo carregado com sucesso![/green]\n"
+            f"Total de registros: {total_linhas_original:,}\n"
+            f"Total de colunas: {len(df.columns)}",
+            title="Arquivo Carregado",
+            border_style="green"
+        ))
+        
+        # Seleciona coluna de CPF
+        coluna_cpf = self.selecionar_coluna(
+            df, 
+            "Selecione a coluna que contém os CPFs:"
+        )
+        
+        # Mostra alguns exemplos da coluna selecionada
+        exemplos = df[coluna_cpf].dropna().head(5).tolist()
+        self.console.print(Panel(
+            f"[cyan]Exemplos de CPFs na coluna '{coluna_cpf}' (antes):[/cyan]\n" +
+            "\n".join([f"• {str(exemplo)}" for exemplo in exemplos]),
+            title="Exemplos de CPFs",
+            border_style="cyan"
+        ))
+        
+        # Confirma se quer continuar
+        continuar = inquirer.confirm(
+            message=f"Deseja continuar e formatar a coluna '{coluna_cpf}' preenchendo zeros à esquerda?",
+            default=True,
+        ).execute()
+        
+        if not continuar:
+            self.console.print("[yellow]Operação cancelada pelo usuário.[/yellow]")
+            return
+        
+        # Formata CPFs
+        self.console.print("[cyan]Formatando CPFs...[/cyan]")
+        
+        def formatar_cpf_normalizado(cpf):
+            """Formata CPF removendo caracteres especiais e preenchendo zeros à esquerda"""
+            if pd.isna(cpf) or cpf == '' or str(cpf).strip() == '':
+                return ''
+            
+            try:
+                # Converte para string e remove espaços
+                cpf_str = str(cpf).strip()
+                
+                # Remove todos os caracteres não numéricos (pontos, traços, espaços, etc)
+                cpf_limpo = re.sub(r'\D', '', cpf_str)
+                
+                # Se estiver vazio após limpeza, retorna vazio
+                if not cpf_limpo:
+                    return ''
+                
+                # Preenche com zeros à esquerda até ter 11 dígitos
+                cpf_formatado = cpf_limpo.zfill(11)
+                
+                # Se tiver mais de 11 dígitos, pega apenas os 11 primeiros
+                if len(cpf_formatado) > 11:
+                    cpf_formatado = cpf_formatado[:11]
+                
+                return cpf_formatado
+                
+            except Exception as e:
+                return str(cpf)
+        
+        # Aplica formatação
+        df[coluna_cpf] = df[coluna_cpf].apply(formatar_cpf_normalizado)
+        
+        # Estatísticas da formatação
+        cpfs_formatados = df[coluna_cpf].notna().sum()
+        cpfs_vazios = (df[coluna_cpf] == '').sum()
+        
+        # Mostra alguns exemplos após formatação
+        exemplos_formatados = df[coluna_cpf].dropna().head(5).tolist()
+        exemplos_formatados = [cpf for cpf in exemplos_formatados if cpf != '']
+        
+        self.console.print(Panel(
+            f"[green]CPFs formatados com sucesso![/green]\n"
+            f"├─ CPFs formatados: {cpfs_formatados:,}\n"
+            f"├─ CPFs vazios: {cpfs_vazios:,}\n\n"
+            f"[cyan]Exemplos após formatação:[/cyan]\n" +
+            "\n".join([f"• {cpf}" for cpf in exemplos_formatados[:5]]),
+            title="Formatação Concluída",
+            border_style="green"
+        ))
+        
+        # Seleciona pasta para salvar
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo formatado:")
+        
+        # Salva arquivo formatado
+        nome_arquivo = os.path.basename(arquivo)
+        nome_base = os.path.splitext(nome_arquivo)[0]
+        caminho_saida = os.path.join(pasta_saida, f"cpf_formatado_{nome_base}.csv")
+        
+        try:
+            # Trata colunas numéricas que devem permanecer como string
+            df = self.tratar_colunas_numericas(df.copy())
+            
+            df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+            
+            self.console.print(Panel(
+                f"[green]Arquivo salvo com sucesso![/green]\n"
+                f"├─ Arquivo original: {nome_arquivo}\n"
+                f"├─ Arquivo processado: cpf_formatado_{nome_base}.csv\n"
+                f"├─ Total de registros: {total_linhas_original:,}\n"
+                f"├─ CPFs formatados: {cpfs_formatados:,}\n"
+                f"└─ Local: {caminho_saida}",
+                title="Processamento Concluído",
+                border_style="green"
+            ))
+            
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao salvar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+
+    def formatar_coluna_cnpj(self):
+        """Normaliza a coluna de CNPJ para o padrão 00.000.000/0000-00."""
+        arquivo = self.selecionar_arquivo("Selecione o arquivo com a coluna de CNPJ das empresas:")
+        try:
+            df = self.carregar_arquivo(arquivo, dtype=str)
+            total_linhas_original = len(df)
+            if total_linhas_original == 0:
+                self.console.print(Panel("[red]O arquivo está vazio![/red]", title="Erro", border_style="red"))
+                return
+        except Exception as e:
+            self.console.print(Panel(f"[red]Erro ao carregar arquivo:[/red]\n\nErro: {str(e)}", title="Erro", border_style="red"))
+            return
+        self.console.print(Panel(
+            f"[green]Arquivo carregado com sucesso![/green]\n"
+            f"Total de registros: {total_linhas_original:,}\n"
+            f"Total de colunas: {len(df.columns)}",
+            title="Arquivo Carregado",
+            border_style="green"
+        ))
+        coluna_cnpj = self.selecionar_coluna(df, "Selecione a coluna de CNPJ das empresas:")
+        exemplos = df[coluna_cnpj].dropna().head(5).tolist()
+        self.console.print(Panel(
+            f"[cyan]Exemplos de CNPJs na coluna '{coluna_cnpj}' (antes):[/cyan]\n" +
+            "\n".join([f"• {str(ex)}" for ex in exemplos]),
+            title="Exemplos de CNPJs",
+            border_style="cyan"
+        ))
+        continuar = inquirer.confirm(
+            message=f"Deseja continuar e formatar a coluna '{coluna_cnpj}' para 00.000.000/0000-00?",
+            default=True,
+        ).execute()
+        if not continuar:
+            self.console.print("[yellow]Operação cancelada pelo usuário.[/yellow]")
+            return
+        _fullwidth = '０１２３４５６７８９'
+        _ascii_dig = '0123456789'
+        def formatar_cnpj_mascara(valor):
+            if pd.isna(valor) or valor == '' or str(valor).strip() == '':
+                return ''
+            if str(valor).strip().lower() == 'nan':
+                return ''
+            if isinstance(valor, (int, float)):
+                raw = format(valor, '.0f')
+            else:
+                raw = str(valor).strip()
+            for fw, ac in zip(_fullwidth, _ascii_dig):
+                raw = raw.replace(fw, ac)
+            conteudo = ''.join(c for c in raw if c in _ascii_dig)
+            if not conteudo:
+                return ''
+            s = conteudo.zfill(14)[:14]
+            return f"{s[0:2]}.{s[2:5]}.{s[5:8]}/{s[8:12]}-{s[12:14]}"
+        self.console.print("[cyan]Formatando CNPJs...[/cyan]")
+        df[coluna_cnpj] = df[coluna_cnpj].astype(str).apply(formatar_cnpj_mascara)
+        cnpjs_formatados = (df[coluna_cnpj] != '').sum()
+        cnpjs_vazios = (df[coluna_cnpj] == '').sum()
+        exemplos_depois = df[coluna_cnpj][df[coluna_cnpj] != ''].head(5).tolist()
+        self.console.print(Panel(
+            f"[green]CNPJs formatados com sucesso![/green]\n"
+            f"├─ CNPJs formatados: {cnpjs_formatados:,}\n"
+            f"├─ CNPJs vazios: {cnpjs_vazios:,}\n\n"
+            f"[cyan]Exemplos após formatação:[/cyan]\n" +
+            "\n".join([f"• {c}" for c in exemplos_depois]),
+            title="Formatação Concluída",
+            border_style="green"
+        ))
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo final:")
+        nome_arquivo = os.path.basename(arquivo)
+        nome_base = os.path.splitext(nome_arquivo)[0]
+        caminho_saida = os.path.join(pasta_saida, f"cnpj_formatado_{nome_base}.csv")
+        try:
+            df = df.copy()
+            df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+            self.console.print(Panel(
+                f"[green]Arquivo salvo com sucesso![/green]\n"
+                f"├─ Arquivo original: {nome_arquivo}\n"
+                f"├─ Arquivo processado: cnpj_formatado_{nome_base}.csv\n"
+                f"├─ Total de registros: {total_linhas_original:,}\n"
+                f"├─ CNPJs formatados: {cnpjs_formatados:,}\n"
+                f"└─ Local: {caminho_saida}",
+                title="Processamento Concluído",
+                border_style="green"
+            ))
+        except Exception as e:
+            self.console.print(Panel(f"[red]Erro ao salvar arquivo:[/red]\n\nErro: {str(e)}", title="Erro", border_style="red"))
+
+    def formatar_coluna_price_voip(self):
+        """
+        Formata a coluna Price do CSV VoIP com vírgula decimal e 3 casas (ex.: 0,025)
+        para facilitar cálculos no Excel em locale BR.
+        """
+        arquivo = self.selecionar_arquivo("Selecione o arquivo VoIP (CSV ou XLSX):")
+        try:
+            df = self.carregar_arquivo(arquivo)
+            if len(df) == 0:
+                self.console.print(Panel("[red]O arquivo está vazio![/red]", title="Erro", border_style="red"))
+                return
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red",
+            ))
+            return
+
+        coluna_price = self.selecionar_coluna(df, "Selecione a coluna de preço (Price):")
+
+        def parse_decimal(valor):
+            if pd.isna(valor):
+                return float('nan')
+            s = str(valor).strip()
+            if s == '' or s.lower() in ('nan', 'none'):
+                return float('nan')
+            s = s.replace(',', '.')
+            try:
+                return float(s)
+            except ValueError:
+                return float('nan')
+
+        def formatar_tres_casas(valor):
+            x = parse_decimal(valor)
+            if x != x:
+                return ''
+            return f"{x:.3f}".replace('.', ',')
+
+        df = df.copy()
+        df[coluna_price] = df[coluna_price].map(formatar_tres_casas)
+
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo:")
+        nome_base = os.path.splitext(os.path.basename(arquivo))[0]
+        caminho_saida = os.path.join(pasta_saida, f"price_formatado_{nome_base}.csv")
+        try:
+            df.to_csv(
+                caminho_saida,
+                sep=';',
+                encoding='utf-8',
+                index=False,
+                quoting=csv.QUOTE_MINIMAL,
+            )
+            n_ok = (df[coluna_price] != '').sum()
+            self.console.print(Panel(
+                f"[green]Arquivo salvo com sucesso![/green]\n"
+                f"├─ Coluna: {coluna_price} (3 casas decimais, vírgula)\n"
+                f"├─ Linhas com preço preenchido: {n_ok:,}\n"
+                f"└─ {caminho_saida}",
+                title="Concluído",
+                border_style="green",
+            ))
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao salvar:[/red]\n\n{str(e)}",
+                title="Erro",
+                border_style="red",
+            ))
+
+    def _voip_resumo_datas_para_painel(self, ts):
+        """
+        Retorna texto: dia mín/máx (calendário), hora mín/máx apenas no último dia,
+        e intervalo datetime completo. ts = Series datetime com NaT possíveis.
+        """
+        if not isinstance(ts, pd.Series):
+            ts = pd.Series(ts, dtype='datetime64[ns]')
+        ts_ok = ts.dropna()
+        if ts_ok.empty:
+            return (
+                "Dia mínimo: —\n"
+                "Dia máximo: —\n"
+                "No último dia com dados — hora mínima: — | hora máxima: —\n"
+                "Intervalo completo (data e hora): — | —"
+            )
+        dia_min = ts_ok.min().strftime('%d/%m/%Y')
+        dia_max = ts_ok.max().strftime('%d/%m/%Y')
+        t_norm = ts_ok.dt.normalize()
+        ultimo_dia = t_norm.max()
+        no_ultimo = ts_ok[t_norm == ultimo_dia]
+        hora_min_ud = no_ultimo.min().strftime('%H:%M:%S')
+        hora_max_ud = no_ultimo.max().strftime('%H:%M:%S')
+        ini_c = ts_ok.min().strftime('%d/%m/%Y %H:%M:%S')
+        fim_c = ts_ok.max().strftime('%d/%m/%Y %H:%M:%S')
+        return (
+            f"Dia mínimo (primeiro dia com registro): {dia_min}\n"
+            f"Dia máximo (último dia com registro): {dia_max}\n"
+            f"No último dia ({dia_max}) — hora mínima: {hora_min_ud} | hora máxima: {hora_max_ud}\n"
+            f"Intervalo completo (data e hora): início {ini_c} | fim {fim_c}"
+        )
+
+    def exportar_voip_price_formatado_com_relatorio(self):
+        """
+        Lê apenas o arquivo VoIP, grava CSV com Price em vírgula (3 casas) e TXT com
+        totais de ligações, soma do Price e faixa de data/hora.
+        Permite ver resumo de datas e filtrar por intervalo de dias.
+        """
+        from options.dados.adicao_mesclagem.add_or_mescle import AddOrMescle
+
+        arquivo = self.selecionar_arquivo("Selecione o arquivo VoIP (CSV ou XLSX):")
+        pular_linha = inquirer.select(
+            message="A primeira linha do arquivo é inválida (cabeçalho na linha 2)?",
+            choices=[
+                Choice(False, name="Não — cabeçalho na linha 1"),
+                Choice(True, name="Sim — pular primeira linha"),
+            ],
+        ).execute()
+        carregador = AddOrMescle()
+        try:
+            if pular_linha:
+                df = carregador.carregar_arquivo_pulando_primeira_linha(arquivo)
+            else:
+                df = carregador.carregar_arquivo(arquivo)
+            if len(df) == 0:
+                self.console.print(Panel("[red]O arquivo está vazio![/red]", title="Erro", border_style="red"))
+                return
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red",
+            ))
+            return
+
+        coluna_price = self.selecionar_coluna(df, "Selecione a coluna de preço (Price):")
+        coluna_data = self.selecionar_coluna(
+            df, "Selecione a coluna de data e hora da ligação (ex.: Start Time, Data & Hora):"
+        )
+        fmt_data_arquivo = inquirer.select(
+            message="Formato da data/hora nessa coluna no arquivo VoIP:",
+            choices=[
+                Choice("us", name="Americano — MM/dd/YYYY (ex.: export MONEY_ANTISPAM)"),
+                Choice("br", name="Brasileiro — dd/mm/aaaa"),
+            ],
+        ).execute()
+        dayfirst_voip = fmt_data_arquivo == "br"
+        legenda_fmt = (
+            "interpretação da coluna: formato US (MM/dd/YYYY)"
+            if fmt_data_arquivo == "us"
+            else "interpretação da coluna: formato BR (dd/mm/aaaa)"
+        )
+
+        ts_full = pd.to_datetime(df[coluna_data], dayfirst=dayfirst_voip, errors='coerce')
+        texto_resumo = self._voip_resumo_datas_para_painel(ts_full)
+        self.console.print(Panel(
+            f"[cyan]{texto_resumo}[/cyan]",
+            title="Resumo de datas no arquivo completo",
+            border_style="cyan",
+        ))
+
+        modo = inquirer.select(
+            message="Como deseja exportar?",
+            choices=[
+                Choice("todos", name="Usar todos os registros"),
+                Choice("filtrar", name="Filtrar por intervalo de datas (apenas dias escolhidos)"),
+            ],
+        ).execute()
+
+        sufixo_arquivo = ""
+        linha_filtro_rel = ""
+        if modo == "filtrar":
+            di = inquirer.text(
+                message="Data inicial (dd/mm/aaaa):",
+                default="",
+            ).execute()
+            df_txt = inquirer.text(
+                message="Data final (dd/mm/aaaa), inclusiva:",
+                default="",
+            ).execute()
+            try:
+                d_ini = pd.to_datetime((di or "").strip(), dayfirst=True)
+                d_fim = pd.to_datetime((df_txt or "").strip(), dayfirst=True)
+            except Exception:
+                self.console.print(Panel(
+                    "[red]Datas inválidas. Use dd/mm/aaaa.[/red]",
+                    title="Erro",
+                    border_style="red",
+                ))
+                return
+            if d_ini > d_fim:
+                d_ini, d_fim = d_fim, d_ini
+                self.console.print("[yellow]Datas invertidas — ajustado para inicial ≤ final.[/yellow]")
+            # Apenas comparação de data (calendário)
+            td = ts_full.dt.date
+            d_ini_d = d_ini.date()
+            d_fim_d = d_fim.date()
+            mask = (td >= d_ini_d) & (td <= d_fim_d)
+            df = df.loc[mask].copy()
+            if len(df) == 0:
+                self.console.print(Panel(
+                    "[red]Nenhum registro no intervalo informado.[/red]",
+                    title="Erro",
+                    border_style="red",
+                ))
+                return
+            sufixo_arquivo = (
+                f"_de_{d_ini_d.strftime('%d%m%Y')}_ate_{d_fim_d.strftime('%d%m%Y')}"
+            )
+            linha_filtro_rel = (
+                f'Filtro de datas aplicado: {d_ini_d.strftime("%d/%m/%Y")} a '
+                f'{d_fim_d.strftime("%d/%m/%Y")} (inclusivo)'
+            )
+
+        def parse_decimal(valor):
+            if pd.isna(valor):
+                return float('nan')
+            s = str(valor).strip()
+            if s == '' or s.lower() in ('nan', 'none'):
+                return float('nan')
+            s = s.replace(',', '.')
+            try:
+                return float(s)
+            except ValueError:
+                return float('nan')
+
+        preco_num = df[coluna_price].map(parse_decimal)
+        n_linhas = len(df)
+        n_com_valor = int(preco_num.notna().sum())
+        n_cobradas_pos = int((preco_num > 0).sum())
+        total_price = preco_num.sum(min_count=1)
+
+        ts = pd.to_datetime(df[coluna_data], dayfirst=dayfirst_voip, errors='coerce')
+        n_sem_data = int(ts.isna().sum())
+        ts_ok = ts.dropna()
+        if ts_ok.empty:
+            inicio = fim = '—'
+        else:
+            inicio = ts_ok.min().strftime('%d/%m/%Y %H:%M:%S')
+            fim = ts_ok.max().strftime('%d/%m/%Y %H:%M:%S')
+
+        texto_resumo_export = self._voip_resumo_datas_para_painel(ts)
+
+        def formatar_tres_casas(valor):
+            x = parse_decimal(valor)
+            if x != x:
+                return ''
+            return f"{x:.3f}".replace('.', ',')
+
+        df_out = df.copy()
+        df_out[coluna_price] = df_out[coluna_price].map(formatar_tres_casas)
+
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o CSV e o relatório:")
+        nome_base = os.path.splitext(os.path.basename(arquivo))[0]
+        nome_arq = f"voip_price_formatado_{nome_base}{sufixo_arquivo}"
+        caminho_csv = os.path.join(pasta_saida, f"{nome_arq}.csv")
+        caminho_txt = os.path.join(pasta_saida, f"{nome_arq}_relatorio.txt")
+
+        moeda = carregador._formatar_moeda_br
+        inteiro = carregador._formatar_inteiro_br
+
+        linhas_txt = [
+            'RELATÓRIO — VoIP (coluna Price)',
+            legenda_fmt,
+            '',
+        ]
+        if linha_filtro_rel:
+            linhas_txt.append(linha_filtro_rel)
+            linhas_txt.append('')
+        linhas_txt.extend([
+            '--- Dados exportados (resumo de datas) ---',
+            texto_resumo_export,
+            '',
+            f'Total de ligações (linhas exportadas): {inteiro(n_linhas)}',
+            f'Ligações com preço numérico informado: {inteiro(n_com_valor)}',
+            f'Ligações com valor cobrado (Price > 0): {inteiro(n_cobradas_pos)}',
+            f'Valor total cobrado (soma Price): {moeda(total_price, 3)}',
+            f'Intervalo de data e hora (detalhe): início {inicio} | fim {fim}',
+            f'Linhas com data/hora vazia ou inválida: {inteiro(n_sem_data)}',
+            '',
+            f'Arquivo CSV gerado: {nome_arq}.csv',
+        ])
+        texto = '\n'.join(linhas_txt)
+
+        try:
+            df_out.to_csv(
+                caminho_csv,
+                sep=';',
+                encoding='utf-8',
+                index=False,
+                quoting=csv.QUOTE_MINIMAL,
+            )
+            with open(caminho_txt, 'w', encoding='utf-8') as f:
+                f.write(texto)
+            self.console.print(Panel(
+                f"[green]Concluído![/green]\n"
+                f"├─ CSV: {caminho_csv}\n"
+                f"└─ Relatório: {caminho_txt}",
+                title="Sucesso",
+                border_style="green",
+            ))
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao salvar:[/red]\n\n{str(e)}",
+                title="Erro",
+                border_style="red",
+            ))
+
     def executar(self):
         """Executa o menu de filtros"""
         while True:
@@ -1301,3 +2274,106 @@ class Filters:
                 self.adicionar_coluna_idade()
             else:
                 break
+
+    def organizar_base_inss(self):
+        """
+        Organiza uma base INSS no formato padrão:
+        CEL1, Nome, CPF, NASC, IDADE, Municipio, UF, Codigo_Banco, nome_banco,
+        Valor_Parcela, Prazo, Parcelas_Paga, Parcelas_Restante, Emprestimo_Ativos,
+        Beneficio, Valor_Beneficio, Margem_Disponivel, Margem_RMC, Margem_RCC.
+        
+        1. Recebe caminho do arquivo base (CSV)
+        2. Recebe pasta de saída para salvar o arquivo organizado
+        """
+        # 1. Seleciona o arquivo base
+        arquivo = self.selecionar_arquivo("Selecione o arquivo base INSS (CSV):")
+        
+        # 2. Carrega o arquivo
+        try:
+            df = self.carregar_arquivo(arquivo)
+            total_linhas = len(df)
+            
+            if total_linhas == 0:
+                self.console.print(Panel(
+                    "[red]O arquivo está vazio![/red]",
+                    title="Erro",
+                    border_style="red"
+                ))
+                return
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar arquivo:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+        
+        # 3. Garante a existência da coluna 'nome_banco'
+        if 'nome_banco' not in df.columns:
+            df['nome_banco'] = ''
+        
+        # 4. Define as colunas finais e verifica se todas existem
+        colunas_finais = [
+            "CEL1",
+            "Nome",
+            "CPF",
+            "NASC",
+            "IDADE",
+            "Municipio",
+            "UF",
+            "Codigo_Banco",
+            "nome_banco",
+            "Valor_Parcela",
+            "Prazo",
+            "Parcelas_Paga",
+            "Parcelas_Restante",
+            "Emprestimo_Ativos",
+            "Beneficio",
+            "Valor_Beneficio",
+            "Margem_Disponivel",
+            "Margem_RMC",
+            "Margem_RCC",
+        ]
+        
+        colunas_faltantes = [c for c in colunas_finais if c not in df.columns]
+        if colunas_faltantes:
+            self.console.print(Panel(
+                "[red]Não foi possível organizar a base INSS.[/red]\n\n"
+                "[yellow]Colunas necessárias não encontradas:[/yellow]\n"
+                + "\n".join(f"• {c}" for c in colunas_faltantes)
+                + "\n\n[cyan]Verifique se o arquivo base está no layout esperado.[/cyan]",
+                title="Colunas Ausentes",
+                border_style="red"
+            ))
+            return
+        
+        # 5. Cria DataFrame apenas com as colunas no formato final
+        df_saida = df[colunas_finais].copy()
+        
+        # 6. Seleciona pasta de saída
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo organizado:")
+        
+        # Usa o mesmo nome do arquivo original
+        nome_arquivo = os.path.basename(arquivo)
+        caminho_saida = os.path.join(pasta_saida, nome_arquivo)
+        
+        # 7. Trata colunas numéricas e salva
+        try:
+            df_saida = self.tratar_colunas_numericas(df_saida.copy())
+            df_saida.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+            
+            self.console.print(Panel(
+                f"[green]Base INSS organizada com sucesso![/green]\n\n"
+                f"[cyan]Resumo:[/cyan]\n"
+                f"├─ Registros: {total_linhas:,}\n"
+                f"├─ Colunas de saída: {len(colunas_finais)}\n"
+                f"└─ Arquivo salvo em:\n   {caminho_saida}",
+                title="Processamento Concluído",
+                border_style="green"
+            ))
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao salvar arquivo organizado:[/red]\n\nErro: {str(e)}",
+                title="Erro ao Salvar",
+                border_style="red"
+            ))

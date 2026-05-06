@@ -13,33 +13,15 @@ from rich.console import Console
 from rich.panel import Panel
 import os
 import re
+from options.utils import (
+    tratar_colunas_numericas, formatar_cpf, formatar_numero_celular,
+    carregar_arquivo, salvar_arquivo, selecionar_arquivo, selecionar_pasta
+)
 
 class Remover:
     def __init__(self):
         self.console = Console()
 
-    def tratar_colunas_numericas(self, df):
-        """Trata colunas numéricas que devem permanecer como string (telefones, CPFs, etc.)"""
-        # Lista de padrões de colunas que devem permanecer como string
-        padroes_string = [
-            'telefone', 'fone', 'phone', 'celular', 'mobile',
-            'cpf', 'cnpj', 'rg', 'cep', 'codigo', 'code',
-            'numero', 'num', 'id', 'identificador'
-        ]
-        
-        for coluna in df.columns:
-            coluna_lower = coluna.lower()
-            
-            # Verifica se a coluna deve ser tratada como string
-            deve_ser_string = any(padrao in coluna_lower for padrao in padroes_string)
-            
-            if deve_ser_string:
-                # Converte para string e remove .0 desnecessários
-                df[coluna] = df[coluna].astype(str).str.replace('.0', '', regex=False)
-                # Remove 'nan' strings e substitui por vazio
-                df[coluna] = df[coluna].replace('nan', '', regex=False)
-        
-        return df
 
     def menu_remover(self):
         """Menu principal de opções de remoção"""
@@ -57,24 +39,6 @@ class Remover:
             ],
         ).execute()
 
-    def formatar_cpf(self, cpf):
-        """Formata CPF para o padrão 00000000000"""
-        if pd.isna(cpf):
-            return None
-        cpf = str(cpf)
-        # Remove tudo que não for número
-        cpf = re.sub(r'\D', '', cpf)
-        # Garante que tenha 11 dígitos
-        return cpf.zfill(11)
-
-    def formatar_numero_celular(self, numero):
-        """Formata número de celular removendo caracteres especiais"""
-        if pd.isna(numero):
-            return None
-        numero = str(numero)
-        # Remove tudo que não for número
-        numero = re.sub(r'\D', '', numero)
-        return numero
 
     def selecionar_coluna(self, df, mensagem):
         """Permite ao usuário selecionar uma coluna do DataFrame"""
@@ -84,37 +48,13 @@ class Remover:
             choices=colunas,
         ).execute()
 
-    def selecionar_arquivo(self, mensagem):
-        """Permite ao usuário selecionar um arquivo"""
-        return inquirer.filepath(
-            message=mensagem,
-            validate=lambda x: x.endswith(('.xlsx', '.csv')),
-            filter=lambda x: x.strip(),
-        ).execute()
-
     def selecionar_pasta_saida(self, mensagem):
         """Permite ao usuário selecionar uma pasta para salvar"""
-        return inquirer.filepath(
-            message=mensagem,
-            filter=lambda x: x.strip(),
-        ).execute()
+        return selecionar_pasta(mensagem, apenas_diretorios=False)
 
     def selecionar_pasta_entrada(self, mensagem):
         """Permite ao usuário selecionar uma pasta de entrada"""
-        return inquirer.filepath(
-            message=mensagem,
-            filter=lambda x: x.strip(),
-        ).execute()
-
-    def carregar_arquivo(self, caminho):
-        """Carrega arquivo CSV ou XLSX"""
-        if caminho.endswith('.xlsx'):
-            return pd.read_excel(caminho)
-        else:
-            try:
-                return pd.read_csv(caminho, sep=';', encoding='utf-8')
-            except:
-                return pd.read_csv(caminho, sep=',', encoding='utf-8')
+        return selecionar_pasta(mensagem)
 
     def salvar_arquivo(self, df, caminho, prefixo, pasta_saida=None):
         """Salva arquivo CSV com prefixo"""
@@ -125,10 +65,7 @@ class Remover:
         
         while True:
             try:
-                # Trata colunas numéricas que devem permanecer como string
-                df = self.tratar_colunas_numericas(df.copy())
-                
-                df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+                salvar_arquivo(df, caminho_saida)
                 return caminho_saida
             except PermissionError:
                 self.console.print(Panel(
@@ -175,8 +112,8 @@ class Remover:
 
     def remover_duplicatas_cpf(self):
         """Remove duplicatas de CPFs"""
-        arquivo = self.selecionar_arquivo("Selecione o arquivo com CPFs:")
-        df = self.carregar_arquivo(arquivo)
+        arquivo = selecionar_arquivo("Selecione o arquivo com CPFs:")
+        df = carregar_arquivo(arquivo)
         
         # Contagem inicial
         total_linhas_inicial = len(df)
@@ -184,7 +121,7 @@ class Remover:
         coluna_cpf = self.selecionar_coluna(df, "Selecione a coluna de CPF:")
         
         # Formata CPFs
-        df['cpf_formatado'] = df[coluna_cpf].apply(self.formatar_cpf)
+        df['cpf_formatado'] = df[coluna_cpf].apply(formatar_cpf)
         
         # Contagem de CPFs únicos
         total_cpfs_unicos = df['cpf_formatado'].nunique()
@@ -218,11 +155,24 @@ class Remover:
 
     def remover_duplicatas_cpf_lote(self):
         """Remove duplicatas de CPFs em todos os arquivos CSV de uma pasta"""
-        pasta_entrada = self.selecionar_pasta_entrada("Selecione a pasta com os arquivos CSV:")
+        pasta_entrada = self.selecionar_pasta_entrada("Selecione a pasta ou arquivo CSV:")
         pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar os arquivos processados:")
         
-        # Lista todos os arquivos CSV na pasta
-        arquivos_csv = [f for f in os.listdir(pasta_entrada) if f.endswith('.csv')]
+        # Verifica se é arquivo ou pasta
+        if os.path.isfile(pasta_entrada) and pasta_entrada.endswith('.csv'):
+            # Se for um arquivo, processa apenas esse arquivo
+            arquivos_csv = [os.path.basename(pasta_entrada)]
+            pasta_entrada = os.path.dirname(pasta_entrada)
+        elif os.path.isdir(pasta_entrada):
+            # Se for uma pasta, lista todos os arquivos CSV
+            arquivos_csv = [f for f in os.listdir(pasta_entrada) if f.endswith('.csv')]
+        else:
+            self.console.print(Panel(
+                "[red]O caminho selecionado não é um arquivo CSV nem uma pasta válida![/red]",
+                title="Erro",
+                border_style="red"
+            ))
+            return
         
         if not arquivos_csv:
             self.console.print(Panel(
@@ -241,7 +191,7 @@ class Remover:
         
         # Pergunta qual coluna de CPF usar (assumindo que todos os arquivos têm a mesma estrutura)
         primeiro_arquivo = os.path.join(pasta_entrada, arquivos_csv[0])
-        df_exemplo = self.carregar_arquivo(primeiro_arquivo)
+        df_exemplo = carregar_arquivo(primeiro_arquivo)
         coluna_cpf = self.selecionar_coluna(df_exemplo, f"Selecione a coluna de CPF (baseado no arquivo {arquivos_csv[0]}):")
         
         # Estatísticas gerais
@@ -255,7 +205,7 @@ class Remover:
         for arquivo in arquivos_csv:
             try:
                 caminho_arquivo = os.path.join(pasta_entrada, arquivo)
-                df = self.carregar_arquivo(caminho_arquivo)
+                df = carregar_arquivo(caminho_arquivo)
                 
                 # Contagem inicial
                 linhas_inicial = len(df)
@@ -267,7 +217,7 @@ class Remover:
                     continue
                 
                 # Formata CPFs
-                df['cpf_formatado'] = df[coluna_cpf].apply(self.formatar_cpf)
+                df['cpf_formatado'] = df[coluna_cpf].apply(formatar_cpf)
                 
                 # Remove duplicatas mantendo a primeira ocorrência
                 df_sem_duplicatas = df.drop_duplicates(subset=['cpf_formatado'], keep='first')
@@ -284,10 +234,7 @@ class Remover:
                 nome_base = os.path.splitext(arquivo)[0]
                 caminho_saida = os.path.join(pasta_saida, f"filter_cpf_{nome_base}.csv")
                 
-                # Trata colunas numéricas que devem permanecer como string
-                df_sem_duplicatas = self.tratar_colunas_numericas(df_sem_duplicatas.copy())
-                
-                df_sem_duplicatas.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+                salvar_arquivo(df_sem_duplicatas, caminho_saida)
                 total_arquivos_processados += 1
                 
                 # Mostra progresso
@@ -320,22 +267,35 @@ class Remover:
 
     def remover_duplicatas_cpf_lote_maior_valor(self):
         """Remove duplicatas de CPFs em todos os arquivos CSV de uma pasta, mantendo o registro com maior valor"""
-        pasta_entrada = self.selecionar_pasta_entrada("Selecione a pasta com os arquivos CSV:")
+        pasta_entrada = self.selecionar_pasta_entrada("Selecione a pasta ou arquivo CSV:")
         pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar os arquivos processados:")
         
-        # Lista todos os arquivos CSV na pasta
-        arquivos_csv = [f for f in os.listdir(pasta_entrada) if f.endswith('.csv')]
+        # Verifica se é arquivo ou pasta
+        if os.path.isfile(pasta_entrada) and pasta_entrada.endswith('.csv'):
+            # Se for um arquivo, processa apenas esse arquivo
+            arquivos_csv = [os.path.basename(pasta_entrada)]
+            pasta_entrada = os.path.dirname(pasta_entrada)
+        elif os.path.isdir(pasta_entrada):
+            # Se for uma pasta, lista todos os arquivos CSV
+            arquivos_csv = [f for f in os.listdir(pasta_entrada) if f.endswith('.csv')]
+        else:
+            self.console.print(Panel(
+                "[red]O caminho selecionado não é um arquivo CSV nem uma pasta válida![/red]",
+                title="Erro",
+                border_style="red"
+            ))
+            return
         
         if not arquivos_csv:
             self.console.print(Panel(
-                "[red]Nenhum arquivo CSV encontrado na pasta selecionada![/red]",
+                "[red]Nenhum arquivo CSV encontrado![/red]",
                 title="Erro",
                 border_style="red"
             ))
             return
         
         self.console.print(Panel(
-            f"[cyan]Encontrados {len(arquivos_csv)} arquivos CSV para processar:[/cyan]\n" + 
+            f"[cyan]Encontrados {len(arquivos_csv)} arquivo(s) CSV para processar:[/cyan]\n" + 
             "\n".join([f"• {arquivo}" for arquivo in arquivos_csv]),
             title="Arquivos Encontrados",
             border_style="cyan"
@@ -343,7 +303,7 @@ class Remover:
         
         # Pergunta qual coluna de CPF usar (assumindo que todos os arquivos têm a mesma estrutura)
         primeiro_arquivo = os.path.join(pasta_entrada, arquivos_csv[0])
-        df_exemplo = self.carregar_arquivo(primeiro_arquivo)
+        df_exemplo = carregar_arquivo(primeiro_arquivo)
         coluna_cpf = self.selecionar_coluna(df_exemplo, f"Selecione a coluna de CPF (baseado no arquivo {arquivos_csv[0]}):")
         coluna_valor = self.selecionar_coluna(df_exemplo, f"Selecione a coluna de valor (ex: Valor_Parcela) (baseado no arquivo {arquivos_csv[0]}):")
         
@@ -358,7 +318,7 @@ class Remover:
         for arquivo in arquivos_csv:
             try:
                 caminho_arquivo = os.path.join(pasta_entrada, arquivo)
-                df = self.carregar_arquivo(caminho_arquivo)
+                df = carregar_arquivo(caminho_arquivo)
                 
                 # Contagem inicial
                 linhas_inicial = len(df)
@@ -374,7 +334,7 @@ class Remover:
                     continue
                 
                 # Formata CPFs
-                df['cpf_formatado'] = df[coluna_cpf].apply(self.formatar_cpf)
+                df['cpf_formatado'] = df[coluna_cpf].apply(formatar_cpf)
                 
                 # Converte coluna de valor para numérico, tratando valores inválidos
                 df['valor_numerico'] = pd.to_numeric(df[coluna_valor], errors='coerce').fillna(0)
@@ -394,10 +354,7 @@ class Remover:
                 nome_base = os.path.splitext(arquivo)[0]
                 caminho_saida = os.path.join(pasta_saida, f"filter_cpf_maior_valor_{nome_base}.csv")
                 
-                # Trata colunas numéricas que devem permanecer como string
-                df_sem_duplicatas = self.tratar_colunas_numericas(df_sem_duplicatas.copy())
-                
-                df_sem_duplicatas.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+                salvar_arquivo(df_sem_duplicatas, caminho_saida)
                 total_arquivos_processados += 1
                 
                 # Mostra progresso
@@ -428,13 +385,51 @@ class Remover:
             border_style="green"
         ))
 
+    def formatar_cnpj(self, valor):
+        """Normaliza CNPJ para comparação: só dígitos, 14 posições"""
+        if pd.isna(valor) or valor == '' or str(valor).strip() == '':
+            return ''
+        return re.sub(r'\D', '', str(valor)).zfill(14)[:14]
+
+    def filtrar_cnpj(self):
+        """Remove do arquivo 1 as linhas cujo CNPJ está no arquivo 2. Dois arquivos, escolhe coluna CNPJ em cada, pasta para salvar."""
+        arquivo_base = selecionar_arquivo("Selecione o arquivo do qual remover os CNPJs:")
+        arquivo_remover = selecionar_arquivo("Selecione o arquivo com os CNPJs a serem removidos:")
+        df_base = carregar_arquivo(arquivo_base)
+        df_remover = carregar_arquivo(arquivo_remover)
+        if df_base.empty:
+            self.console.print(Panel("[red]Arquivo base está vazio![/red]", title="Erro", border_style="red"))
+            return
+        if df_remover.empty:
+            self.console.print(Panel("[red]Arquivo de CNPJs a remover está vazio![/red]", title="Erro", border_style="red"))
+            return
+        col_cnpj_base = self.selecionar_coluna(df_base, "Selecione a coluna de CNPJ do arquivo base:")
+        col_cnpj_remover = self.selecionar_coluna(df_remover, "Selecione a coluna de CNPJ do arquivo a remover:")
+        df_base['_cnpj_norm'] = df_base[col_cnpj_base].apply(self.formatar_cnpj)
+        cnpjs_remover = set(df_remover[col_cnpj_remover].apply(self.formatar_cnpj).dropna())
+        cnpjs_remover.discard('')
+        df_filtrado = df_base[~df_base['_cnpj_norm'].isin(cnpjs_remover)].drop(columns=['_cnpj_norm'])
+        total_base = len(df_base)
+        total_removidos = total_base - len(df_filtrado)
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo final:")
+        caminho_saida = self.salvar_arquivo(df_filtrado, arquivo_base, "filtrado_cnpj_", pasta_saida)
+        mensagem = (
+            f"Filtrar CNPJ:\n"
+            f"├─ Arquivo base: {total_base:,} linhas\n"
+            f"├─ CNPJs a remover: {len(cnpjs_remover):,}\n"
+            f"├─ Linhas removidas: {total_removidos:,}\n"
+            f"├─ Linhas no arquivo final: {len(df_filtrado):,}\n"
+            f"└─ Salvo: {caminho_saida}"
+        )
+        self.console.print(Panel(mensagem, title="Sucesso", border_style="green"))
+
     def remover_cpfs_blacklist(self):
         """Remove CPFs que estão na blacklist"""
-        arquivo_base = self.selecionar_arquivo("Selecione o arquivo base:")
-        arquivo_blacklist = self.selecionar_arquivo("Selecione o arquivo blacklist:")
+        arquivo_base = selecionar_arquivo("Selecione o arquivo base:")
+        arquivo_blacklist = selecionar_arquivo("Selecione o arquivo blacklist:")
         
-        df_base = self.carregar_arquivo(arquivo_base)
-        df_blacklist = self.carregar_arquivo(arquivo_blacklist)
+        df_base = carregar_arquivo(arquivo_base)
+        df_blacklist = carregar_arquivo(arquivo_blacklist)
         
         # Contagem inicial
         total_linhas_base = len(df_base)
@@ -444,8 +439,8 @@ class Remover:
         coluna_cpf_blacklist = self.selecionar_coluna(df_blacklist, "Selecione a coluna de CPF da blacklist:")
         
         # Formata CPFs
-        df_base['cpf_formatado'] = df_base[coluna_cpf_base].apply(self.formatar_cpf)
-        df_blacklist['cpf_formatado'] = df_blacklist[coluna_cpf_blacklist].apply(self.formatar_cpf)
+        df_base['cpf_formatado'] = df_base[coluna_cpf_base].apply(formatar_cpf)
+        df_blacklist['cpf_formatado'] = df_blacklist[coluna_cpf_blacklist].apply(formatar_cpf)
         
         # Remove CPFs da blacklist
         df_whitelist = df_base[~df_base['cpf_formatado'].isin(df_blacklist['cpf_formatado'])]
@@ -486,11 +481,11 @@ class Remover:
 
     def remover_numeros_blacklist(self):
         """Remove números da blacklist por CPF"""
-        arquivo_base = self.selecionar_arquivo("Selecione o arquivo base:")
-        arquivo_blacklist = self.selecionar_arquivo("Selecione o arquivo blacklist:")
+        arquivo_base = selecionar_arquivo("Selecione o arquivo base:")
+        arquivo_blacklist = selecionar_arquivo("Selecione o arquivo blacklist:")
         
-        df_base = self.carregar_arquivo(arquivo_base)
-        df_blacklist = self.carregar_arquivo(arquivo_blacklist)
+        df_base = carregar_arquivo(arquivo_base)
+        df_blacklist = carregar_arquivo(arquivo_blacklist)
         
         # Contagem inicial
         total_linhas_base = len(df_base)
@@ -502,8 +497,8 @@ class Remover:
         coluna_numero_blacklist = self.selecionar_coluna(df_blacklist, "Selecione a coluna de número da blacklist:")
         
         # Formata CPFs
-        df_base['cpf_formatado'] = df_base[coluna_cpf_base].apply(self.formatar_cpf)
-        df_blacklist['cpf_formatado'] = df_blacklist[coluna_cpf_blacklist].apply(self.formatar_cpf)
+        df_base['cpf_formatado'] = df_base[coluna_cpf_base].apply(formatar_cpf)
+        df_blacklist['cpf_formatado'] = df_blacklist[coluna_cpf_blacklist].apply(formatar_cpf)
         
         # Cria uma cópia do DataFrame base
         df_resultado = df_base.copy()
@@ -547,30 +542,44 @@ class Remover:
 
     def remover_numeros_blacklist_lote(self):
         """Remove números da blacklist em lote por pasta"""
-        # Seleciona pasta com arquivos CSV
-        pasta_entrada = self.selecionar_pasta_entrada("Selecione a pasta com os arquivos CSV para processar:")
+        # Seleciona pasta ou arquivo CSV
+        pasta_entrada = self.selecionar_pasta_entrada("Selecione a pasta ou arquivo CSV para processar:")
         
-        # Lista todos os arquivos CSV na pasta
-        arquivos_csv = []
-        for arquivo in os.listdir(pasta_entrada):
-            if arquivo.lower().endswith('.csv'):
-                arquivos_csv.append(os.path.join(pasta_entrada, arquivo))
+        # Verifica se é arquivo ou pasta
+        if os.path.isfile(pasta_entrada) and pasta_entrada.lower().endswith('.csv'):
+            # Se for um arquivo, processa apenas esse arquivo
+            arquivos_csv = [pasta_entrada]
+            pasta_base = os.path.dirname(pasta_entrada)
+        elif os.path.isdir(pasta_entrada):
+            # Se for uma pasta, lista todos os arquivos CSV
+            pasta_base = pasta_entrada
+            arquivos_csv = []
+            for arquivo in os.listdir(pasta_entrada):
+                if arquivo.lower().endswith('.csv'):
+                    arquivos_csv.append(os.path.join(pasta_entrada, arquivo))
+        else:
+            self.console.print(Panel(
+                "[red]O caminho selecionado não é um arquivo CSV nem uma pasta válida![/red]",
+                title="Erro",
+                border_style="red"
+            ))
+            return
         
         if not arquivos_csv:
             self.console.print(Panel(
-                "[red]Nenhum arquivo CSV encontrado na pasta selecionada![/red]\n\n"
-                f"Pasta: {pasta_entrada}\n\n"
-                "[cyan]Certifique-se de que a pasta contém arquivos .csv[/cyan]",
+                "[red]Nenhum arquivo CSV encontrado![/red]\n\n"
+                f"Caminho: {pasta_entrada}\n\n"
+                "[cyan]Certifique-se de que há arquivos .csv no caminho selecionado[/cyan]",
                 title="Erro",
                 border_style="red"
             ))
             return
         
         # Seleciona arquivo blacklist
-        arquivo_blacklist = self.selecionar_arquivo("Selecione o arquivo blacklist (arquivo único com coluna 'numero'):")
+        arquivo_blacklist = selecionar_arquivo("Selecione o arquivo blacklist (arquivo único com coluna 'numero'):")
         
         # Carrega arquivo blacklist
-        df_blacklist = self.carregar_arquivo(arquivo_blacklist)
+        df_blacklist = carregar_arquivo(arquivo_blacklist)
         total_linhas_blacklist = len(df_blacklist)
         
         # Seleciona coluna de número na blacklist
@@ -579,9 +588,10 @@ class Remover:
         # Cria conjunto de números da blacklist para busca rápida
         numeros_blacklist = set(df_blacklist[coluna_numero_blacklist].astype(str).str.strip())
         
+        caminho_exibicao = pasta_entrada if os.path.isdir(pasta_entrada) or not os.path.isfile(pasta_entrada) else os.path.dirname(pasta_entrada)
         self.console.print(Panel(
             f"[cyan]Processamento em Lote - Remoção de Números da Blacklist[/cyan]\n\n"
-            f"Pasta de entrada: {pasta_entrada}\n"
+            f"Caminho de entrada: {caminho_exibicao}\n"
             f"Total de arquivos CSV encontrados: {len(arquivos_csv):,}\n"
             f"Arquivo blacklist: {os.path.basename(arquivo_blacklist)}\n"
             f"Total de números na blacklist: {total_linhas_blacklist:,}\n\n"
@@ -633,7 +643,7 @@ class Remover:
             
             try:
                 # Carrega arquivo
-                df = self.carregar_arquivo(arquivo_csv)
+                df = carregar_arquivo(arquivo_csv)
                 total_linhas = len(df)
                 
                 if total_linhas == 0:
@@ -674,10 +684,7 @@ class Remover:
                 caminho_saida = os.path.join(pasta_saida, f"blacklist_lote_{nome_base}.csv")
                 
                 try:
-                    # Trata colunas numéricas que devem permanecer como string
-                    df_filtrado = self.tratar_colunas_numericas(df_filtrado.copy())
-                    
-                    df_filtrado.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+                    salvar_arquivo(df_filtrado, caminho_saida)
                     
                     # Estatísticas do arquivo
                     estatisticas_arquivo = {
@@ -829,10 +836,7 @@ class Remover:
             try:
                 df_relatorio = pd.DataFrame(estatisticas_arquivos)
                 relatorio_path = os.path.join(pasta_saida, "relatorio_blacklist_lote.csv")
-                # Trata colunas numéricas que devem permanecer como string
-                df_relatorio = self.tratar_colunas_numericas(df_relatorio.copy())
-                
-                df_relatorio.to_csv(relatorio_path, sep=';', encoding='utf-8', index=False)
+                salvar_arquivo(df_relatorio, relatorio_path)
                 mensagem += f"\n\n[bold green]📊 Relatório detalhado salvo:[/bold green]\n└─ {relatorio_path}"
             except Exception as e:
                 mensagem += f"\n\n[bold red]❌ Erro ao salvar relatório: {str(e)}[/bold red]"
@@ -845,11 +849,11 @@ class Remover:
 
     def remover_celulares_blacklist(self):
         """Remove linhas do arquivo base que têm números de celular presentes na blacklist"""
-        arquivo_base = self.selecionar_arquivo("Selecione o arquivo base:")
-        arquivo_blacklist = self.selecionar_arquivo("Selecione o arquivo blacklist_numeros:")
+        arquivo_base = selecionar_arquivo("Selecione o arquivo base:")
+        arquivo_blacklist = selecionar_arquivo("Selecione o arquivo blacklist_numeros:")
         
-        df_base = self.carregar_arquivo(arquivo_base)
-        df_blacklist = self.carregar_arquivo(arquivo_blacklist)
+        df_base = carregar_arquivo(arquivo_base)
+        df_blacklist = carregar_arquivo(arquivo_blacklist)
         
         # Contagem inicial
         total_linhas_base = len(df_base)
@@ -859,8 +863,8 @@ class Remover:
         coluna_celular_blacklist = self.selecionar_coluna(df_blacklist, "Selecione a coluna de celular do arquivo blacklist_numeros:")
         
         # Formata números de celular
-        df_base['celular_formatado'] = df_base[coluna_celular_base].apply(self.formatar_numero_celular)
-        df_blacklist['celular_formatado'] = df_blacklist[coluna_celular_blacklist].apply(self.formatar_numero_celular)
+        df_base['celular_formatado'] = df_base[coluna_celular_base].apply(formatar_numero_celular)
+        df_blacklist['celular_formatado'] = df_blacklist[coluna_celular_blacklist].apply(formatar_numero_celular)
         
         # Remove valores None e cria conjunto de números da blacklist
         numeros_blacklist = set(df_blacklist['celular_formatado'].dropna())

@@ -1,10 +1,20 @@
-inquirerpy>=0.3.4
-rich>=13.0.0
-pandas>=2.0.0
-openpyxl>=3.1.0
-selenium>=4.15.0
-beautifulsoup4>=4.12.0
-requests>=2.31.0
-webdriver-manager>=4.0.0
-chardet>=5.0.0
-ftfy>=6.1.0 
+# SmartFiler2 - Dependências do Sistema
+# Sistema Hierárquico de Processamento de Arquivos
+
+# Interface e Menu
+inquirerpy>=0.3.4          # Menu interativo hierárquico
+rich>=13.0.0               # Interface rica com cores e formatação
+
+# Processamento de Dados
+pandas>=2.0.0              # Manipulação de DataFrames (CSV, Excel)
+openpyxl>=3.1.0            # Leitura/escrita de arquivos Excel (.xlsx)
+
+# Web Scraping e Download
+selenium>=4.15.0           # Automação de navegador para web scraping
+beautifulsoup4>=4.12.0     # Parsing de HTML
+webdriver-manager>=4.0.0   # Gerenciamento automático de drivers do Selenium
+requests>=2.31.0           # Requisições HTTP (APIs, downloads)
+
+# Encoding e Formatação
+chardet>=5.0.0             # Detecção automática de encoding
+ftfy>=6.1.0                # Correção de problemas de encoding em texto

@@ -14,6 +14,10 @@ from rich.panel import Panel
 from rich.table import Table
 import os
 import glob
+from options.utils import (
+    carregar_arquivo, salvar_arquivo, selecionar_arquivo, selecionar_pasta,
+    converter_numero_para_float, normalizar_valor_numerico
+)
 
 class CorrelacaoColunas:
     def __init__(self):
@@ -34,37 +38,10 @@ class CorrelacaoColunas:
             ],
         ).execute()
 
-    def selecionar_arquivo(self, mensagem):
-        """Permite ao usuário selecionar um arquivo CSV"""
-        return inquirer.filepath(
-            message=mensagem,
-            filter=lambda x: x.strip() if x and x.endswith('.csv') else None,
-        ).execute()
-
-    def selecionar_pasta(self, mensagem):
-        """Permite ao usuário selecionar uma pasta"""
-        return inquirer.filepath(
-            message=mensagem,
-            only_directories=True,
-            filter=lambda x: x.strip(),
-        ).execute()
-
     def carregar_csv(self, caminho_arquivo):
         """Carrega um arquivo CSV e retorna o DataFrame"""
         try:
-            # Tentar diferentes delimitadores
-            for delimiter in [';', ',', '\t']:
-                try:
-                    df = pd.read_csv(caminho_arquivo, delimiter=delimiter, encoding='utf-8')
-                    if len(df.columns) > 1:  # Se encontrou mais de uma coluna, provavelmente é o delimitador correto
-                        return df
-                except:
-                    continue
-            
-            # Se nenhum delimitador funcionou, usar o padrão
-            df = pd.read_csv(caminho_arquivo, encoding='utf-8')
-            return df
-            
+            return carregar_arquivo(caminho_arquivo)
         except Exception as e:
             self.console.print(f"[red]Erro ao carregar arquivo {caminho_arquivo}: {str(e)}[/red]")
             return None
@@ -135,7 +112,7 @@ class CorrelacaoColunas:
             caminho_saida = os.path.join(pasta_saida, nome_arquivo)
             
             # Salvar CSV
-            df_resultado.to_csv(caminho_saida, index=False, encoding='utf-8', sep=';')
+            salvar_arquivo(df_resultado, caminho_saida)
             
             return caminho_saida, df_resultado
             
@@ -191,7 +168,7 @@ class CorrelacaoColunas:
             border_style="cyan"
         ))
         
-        arquivo_modelo = self.selecionar_arquivo("Selecione o arquivo CSV MODELO:")
+        arquivo_modelo = selecionar_arquivo("Selecione o arquivo CSV MODELO:")
         self.df_modelo = self.carregar_csv(arquivo_modelo)
         
         if self.df_modelo is None:
@@ -205,7 +182,7 @@ class CorrelacaoColunas:
             border_style="cyan"
         ))
         
-        arquivo_dados = self.selecionar_arquivo("Selecione o arquivo CSV de DADOS:")
+        arquivo_dados = selecionar_arquivo("Selecione o arquivo CSV de DADOS:")
         self.df_dados = self.carregar_csv(arquivo_dados)
         
         if self.df_dados is None:
@@ -224,11 +201,7 @@ class CorrelacaoColunas:
             return
         
         # 5. Selecionar pasta de saída
-        pasta_saida = inquirer.filepath(
-            message="Selecione a pasta para salvar o arquivo correlacionado:",
-            only_directories=True,
-            filter=lambda x: x.strip(),
-        ).execute()
+        pasta_saida = selecionar_pasta("Selecione a pasta para salvar o arquivo correlacionado:")
         
         # 6. Gerar CSV correlacionado
         self.console.print("\n[cyan]Gerando arquivo correlacionado...[/cyan]")
@@ -249,7 +222,7 @@ class CorrelacaoColunas:
             border_style="cyan"
         ))
         
-        pasta_csv = self.selecionar_pasta("Selecione a pasta com os arquivos CSV:")
+        pasta_csv = selecionar_pasta("Selecione a pasta com os arquivos CSV:")
         
         # Buscar arquivos CSV na pasta
         arquivos_csv = glob.glob(os.path.join(pasta_csv, "*.csv"))
@@ -348,7 +321,7 @@ class CorrelacaoColunas:
                 )
                 
                 # Salvar arquivo corrigido
-                df_corrigido.to_csv(arquivo_csv, index=False, encoding='utf-8', sep=';')
+                salvar_arquivo(df_corrigido, arquivo_csv)
                 
                 arquivos_processados.append(nome_arquivo)
                 self.console.print(f"[green]✓[/green] Arquivo corrigido com sucesso")
@@ -417,26 +390,10 @@ class CorrelacaoColunas:
         
         # Função de conversão (mesma do processamento)
         def converter_numero(valor):
-            if pd.isna(valor) or valor == '' or str(valor).strip() == '':
-                return 0.0
-            
-            valor_str = str(valor).strip()
-            
-            # Se tem vírgula, ponto é separador de milhares
-            if ',' in valor_str:
-                valor_sem_pontos = valor_str.replace('.', '')
-                valor_final = valor_sem_pontos.replace(',', '.')
-            else:
-                # Se não tem vírgula, pode ter ponto como decimal
-                valor_final = valor_str
-            
-            try:
-                valor_convertido = float(valor_final)
-                if abs(valor_convertido) > 100000:
-                    return f"⚠️ SUSPEITO: {valor_convertido}"
-                return valor_convertido
-            except:
+            valor_convertido = converter_numero_para_float(valor)
+            if valor_convertido == 0.0 and str(valor).strip() != '' and str(valor).strip() != '0':
                 return "❌ ERRO"
+            return valor_convertido
         
         # Mostrar preview para colunas de utilizado
         self.console.print("\n[bold cyan]Colunas Utilizado:[/bold cyan]")
@@ -497,37 +454,9 @@ class CorrelacaoColunas:
         """Recalcula os totais das colunas especificadas"""
         df_corrigido = df.copy()
         
-        # Converter colunas para numérico, seguindo a ordem específica
+        # Converter colunas para numérico usando função utilitária
         def converter_para_numerico(serie):
-            # Função seguindo a ordem: valores -> remove ponto -> troca vírgula por ponto -> soma valores
-            def converter_numero(valor):
-                if pd.isna(valor) or valor == '' or str(valor).strip() == '':
-                    return 0.0
-                
-                valor_str = str(valor).strip()
-                
-                # Se tem vírgula, ponto é separador de milhares
-                if ',' in valor_str:
-                    # Remove pontos (separadores de milhares) e converte vírgula para ponto
-                    valor_sem_pontos = valor_str.replace('.', '')
-                    valor_final = valor_sem_pontos.replace(',', '.')
-                else:
-                    # Se não tem vírgula, mantém como está (pode ter ponto como decimal)
-                    valor_final = valor_str
-                
-                try:
-                    valor_convertido = float(valor_final)
-                    
-                    # Validação: valores acima de 100.000 são suspeitos
-                    if abs(valor_convertido) > 100000:
-                        print(f"⚠️ VALOR SUSPEITO DETECTADO: {valor_str} → {valor_convertido}")
-                        return 0.0
-                    
-                    return valor_convertido
-                except:
-                    return 0.0
-            
-            return serie.apply(converter_numero)
+            return serie.apply(converter_numero_para_float)
         
         # Recalcular total utilizado
         if coluna_total_utilizado in df_corrigido.columns:
@@ -567,7 +496,7 @@ class CorrelacaoColunas:
         ))
         
         # 1. Selecionar pasta
-        pasta_csv = self.selecionar_pasta("Selecione a pasta com os arquivos CSV para normalizar:")
+        pasta_csv = selecionar_pasta("Selecione a pasta com os arquivos CSV para normalizar:")
         if not pasta_csv:
             return
         
@@ -628,7 +557,7 @@ class CorrelacaoColunas:
                 
                 if df is not None:
                     df_normalizado = self.normalizar_dataframe(df, colunas_numericas)
-                    df_normalizado.to_csv(caminho_arquivo, index=False, encoding='utf-8', sep=';')
+                    salvar_arquivo(df_normalizado, caminho_arquivo)
                     arquivos_processados.append(arquivo)
                     self.console.print(f"✓ Arquivo normalizado com sucesso")
                 else:
@@ -675,29 +604,9 @@ class CorrelacaoColunas:
             border_style="yellow"
         ))
         
-        # Função de normalização
+        # Função de normalização usando utilitário
         def normalizar_valor(valor):
-            if pd.isna(valor) or valor == '' or str(valor).strip() == '':
-                return "0,00"
-            
-            valor_str = str(valor).strip()
-            
-            # Converter para float primeiro
-            try:
-                # Se tem vírgula, ponto é separador de milhares
-                if ',' in valor_str:
-                    valor_sem_pontos = valor_str.replace('.', '')
-                    valor_final = valor_sem_pontos.replace(',', '.')
-                else:
-                    valor_final = valor_str
-                
-                valor_float = float(valor_final)
-                
-                # Formatar com 2 casas decimais e vírgula como separador decimal (sem separador de milhares)
-                return f"{valor_float:.2f}".replace('.', ',')
-                
-            except:
-                return valor_str  # Se não conseguir converter, mantém original
+            return normalizar_valor_numerico(valor)
         
         # Mostrar preview para cada coluna numérica
         for col in colunas_numericas:
@@ -712,32 +621,10 @@ class CorrelacaoColunas:
         """Normaliza um DataFrame aplicando formatação padronizada"""
         df_normalizado = df.copy()
         
-        def normalizar_valor(valor):
-            if pd.isna(valor) or valor == '' or str(valor).strip() == '':
-                return "0,00"
-            
-            valor_str = str(valor).strip()
-            
-            try:
-                # Converter para float
-                if ',' in valor_str:
-                    valor_sem_pontos = valor_str.replace('.', '')
-                    valor_final = valor_sem_pontos.replace(',', '.')
-                else:
-                    valor_final = valor_str
-                
-                valor_float = float(valor_final)
-                
-                # Formatar com 2 casas decimais e vírgula como separador decimal (sem separador de milhares)
-                return f"{valor_float:.2f}".replace('.', ',')
-                
-            except:
-                return valor_str  # Se não conseguir converter, mantém original
-        
-        # Aplicar normalização nas colunas numéricas
+        # Aplicar normalização nas colunas numéricas usando função utilitária
         for col in colunas_numericas:
             if col in df_normalizado.columns:
-                df_normalizado[col] = df_normalizado[col].apply(normalizar_valor)
+                df_normalizado[col] = df_normalizado[col].apply(normalizar_valor_numerico)
         
         return df_normalizado
 
