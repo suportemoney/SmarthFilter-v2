@@ -213,6 +213,20 @@ ESTRUTURA_SISTEMA = {
                         executar=None,
                         modulo="dados.filtragem.filters.Filters.organizar_base_inss"
                     ),
+                    OpcaoPrograma(
+                        id="manter_colunas_selecionadas",
+                        nome="Manter Apenas Colunas Selecionadas",
+                        descricao="Remove colunas não escolhidas e renomeia cabeçalhos para A, B, C... (ex.: A e G viram A e B)",
+                        executar=None,
+                        modulo="dados.filtragem.filters.Filters.manter_colunas_selecionadas"
+                    ),
+                    OpcaoPrograma(
+                        id="manter_colunas_selecionadas_lote",
+                        nome="Manter Colunas Selecionadas (Lote)",
+                        descricao="Mesma extração de colunas por cabeçalho em todos os CSV/XLSX de uma pasta",
+                        executar=None,
+                        modulo="dados.filtragem.filters.Filters.manter_colunas_selecionadas_lote"
+                    ),
                 ]
             ),
             SubCategoria(
@@ -331,6 +345,20 @@ ESTRUTURA_SISTEMA = {
                         descricao="Converte arquivos de texto para formato CSV",
                         executar=None,
                         modulo="conversao.formatos.txt_to_csv.TxtToCsv.executar"
+                    ),
+                    OpcaoPrograma(
+                        id="formatar_colunas_excel",
+                        nome="Formatar Colunas Numéricas (Excel)",
+                        descricao="Formata colunas selecionadas para padrão Excel (123.45, sem milhar)",
+                        executar=None,
+                        modulo="conversao.formatos.converter.Converter.formatar_colunas_numeros_excel"
+                    ),
+                    OpcaoPrograma(
+                        id="formatar_colunas_excel_lote",
+                        nome="Formatar Colunas Numéricas (Excel) em Lote",
+                        descricao="Formata colunas numéricas em todos os CSV/XLSX de uma pasta",
+                        executar=None,
+                        modulo="conversao.formatos.converter.Converter.formatar_colunas_numeros_excel_lote"
                     ),
                 ]
             ),

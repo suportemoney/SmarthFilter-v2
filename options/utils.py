@@ -214,6 +214,68 @@ def selecionar_coluna(df, mensagem):
     ).execute()
 
 
+def selecionar_colunas(df, mensagem):
+    """Permite ao usuário selecionar múltiplas colunas do DataFrame"""
+    colunas = list(df.columns)
+    return inquirer.checkbox(
+        message=mensagem,
+        choices=colunas,
+        validate=lambda r: len(r) > 0 or "Selecione ao menos uma coluna",
+    ).execute()
+
+
+def parse_valor_numerico_excel(valor):
+    """Converte valor BR/US para float (sem limite artificial de magnitude)"""
+    if pd.isna(valor):
+        return None
+
+    if isinstance(valor, (int, float)):
+        try:
+            if pd.isna(valor):
+                return None
+            return float(valor)
+        except (TypeError, ValueError):
+            return None
+
+    valor_str = str(valor).strip()
+    if valor_str == '' or valor_str.lower() in ('nan', 'none', 'null'):
+        return None
+
+    # Remove símbolos de moeda e espaços
+    valor_str = valor_str.replace('R$', '').replace('$', '').strip()
+
+    try:
+        if ',' in valor_str:
+            # Formato BR: 1.456,00 ou 123,45
+            valor_final = valor_str.replace('.', '').replace(',', '.')
+        else:
+            # Formato US/Excel: 123456.00 ou 123.00
+            valor_final = valor_str
+
+        return float(valor_final)
+    except (TypeError, ValueError):
+        return None
+
+
+def formatar_valor_excel(valor, casas_decimais=2):
+    """Formata valor numérico para padrão Excel (ponto decimal, sem milhar)"""
+    valor_float = parse_valor_numerico_excel(valor)
+    if valor_float is None:
+        return ''
+    return f"{valor_float:.{casas_decimais}f}"
+
+
+def aplicar_formato_excel_colunas(df, colunas, casas_decimais=2):
+    """Aplica formatação Excel nas colunas indicadas do DataFrame"""
+    df_formatado = df.copy()
+    for coluna in colunas:
+        if coluna in df_formatado.columns:
+            df_formatado[coluna] = df_formatado[coluna].apply(
+                lambda v: formatar_valor_excel(v, casas_decimais)
+            )
+    return df_formatado
+
+
 def converter_numero_para_float(valor):
     """Converte string numérica para float, tratando vírgula como separador decimal"""
     if pd.isna(valor) or valor == '' or str(valor).strip() == '':
@@ -261,4 +323,30 @@ def normalizar_valor_numerico(valor):
         
     except:
         return valor_str  # Se não conseguir converter, mantém original
+
+
+def gerar_nomes_colunas_alfabeticas(quantidade):
+    """Gera nomes de coluna no padrão A, B, ..., Z, AA, AB, ..."""
+    nomes = []
+    for i in range(quantidade):
+        nome = ""
+        indice = i
+        while True:
+            nome = chr(ord('A') + indice % 26) + nome
+            indice = indice // 26 - 1
+            if indice < 0:
+                break
+        nomes.append(nome)
+    return nomes
+
+
+def extrair_colunas_com_cabecalho_alfabetico(df, colunas_selecionadas):
+    """Mantém apenas as colunas escolhidas (ordem do arquivo) e renomeia para A, B, C..."""
+    selecionadas = set(colunas_selecionadas)
+    colunas_ordenadas = [c for c in df.columns if c in selecionadas]
+    if not colunas_ordenadas:
+        raise ValueError("Nenhuma das colunas selecionadas foi encontrada no arquivo.")
+    df_saida = df[colunas_ordenadas].copy()
+    df_saida.columns = gerar_nomes_colunas_alfabeticas(len(colunas_ordenadas))
+    return df_saida
 

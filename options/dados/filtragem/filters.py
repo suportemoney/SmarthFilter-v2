@@ -16,6 +16,11 @@ import math
 import glob
 import csv
 import re
+from options.utils import (
+    selecionar_colunas,
+    extrair_colunas_com_cabecalho_alfabetico,
+    gerar_nomes_colunas_alfabeticas,
+)
 
 class Filters:
     def __init__(self):
@@ -2377,3 +2382,214 @@ class Filters:
                 title="Erro ao Salvar",
                 border_style="red"
             ))
+
+    def _salvar_arquivo_colunas_selecionadas(self, df, caminho_original, pasta_saida):
+        """Salva CSV com colunas filtradas na pasta de saída"""
+        nome_arquivo = os.path.basename(caminho_original)
+        caminho_saida = os.path.join(pasta_saida, nome_arquivo)
+
+        while True:
+            try:
+                df = self.tratar_colunas_numericas(df.copy())
+                df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
+                return caminho_saida
+            except PermissionError:
+                self.console.print(Panel(
+                    f"[red]Erro de Permissão![/red]\n\n"
+                    f"Não foi possível salvar o arquivo:\n{caminho_saida}\n\n"
+                    f"[cyan]Feche o arquivo se estiver aberto e tente novamente.[/cyan]",
+                    title="Erro de Permissão",
+                    border_style="red",
+                ))
+                opcao = inquirer.select(
+                    message="O que deseja fazer?",
+                    choices=[
+                        Choice("1", name="Tentar salvar novamente no mesmo local"),
+                        Choice("2", name="Escolher nova pasta para salvar"),
+                    ],
+                ).execute()
+                if opcao == "2":
+                    pasta_saida = self.selecionar_pasta_saida(
+                        "Selecione uma nova pasta para salvar o arquivo:"
+                    )
+                    caminho_saida = os.path.join(pasta_saida, nome_arquivo)
+            except Exception as e:
+                self.console.print(Panel(
+                    f"[red]Erro ao salvar arquivo:[/red]\n\nErro: {str(e)}",
+                    title="Erro",
+                    border_style="red",
+                ))
+                pasta_saida = self.selecionar_pasta_saida(
+                    "Selecione uma nova pasta para salvar o arquivo:"
+                )
+                caminho_saida = os.path.join(pasta_saida, nome_arquivo)
+
+    def manter_colunas_selecionadas(self):
+        """Mantém apenas colunas escolhidas pelo cabeçalho e renomeia para A, B, C..."""
+        self.console.print(Panel(
+            "[bold cyan]Manter Apenas Colunas Selecionadas[/bold cyan]\n"
+            "Selecione os cabeçalhos que deseja manter. As demais colunas serão removidas.\n"
+            "Os cabeçalhos de saída serão renomeados sequencialmente (A, B, C...).",
+            title="Extrair Colunas",
+            border_style="cyan",
+        ))
+
+        arquivo = self.selecionar_arquivo("Selecione o arquivo (CSV ou XLSX):")
+        if not arquivo:
+            return
+
+        try:
+            df = self.carregar_arquivo(arquivo)
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar arquivo:[/red]\n\n{e}",
+                title="Erro",
+                border_style="red",
+            ))
+            return
+
+        if len(df.columns) == 0:
+            self.console.print("[red]Nenhuma coluna encontrada no arquivo![/red]")
+            return
+
+        colunas_escolhidas = selecionar_colunas(
+            df,
+            "Selecione as colunas (cabeçalhos) que deseja manter:",
+        )
+        if not colunas_escolhidas:
+            self.console.print("[yellow]Nenhuma coluna selecionada.[/yellow]")
+            return
+
+        try:
+            df_saida = extrair_colunas_com_cabecalho_alfabetico(df, colunas_escolhidas)
+        except ValueError as e:
+            self.console.print(Panel(f"[red]{e}[/red]", border_style="red"))
+            return
+
+        mapeamento = "\n".join(
+            f"  • {orig} → {novo}"
+            for orig, novo in zip(
+                [c for c in df.columns if c in set(colunas_escolhidas)],
+                list(df_saida.columns),
+            )
+        )
+
+        self.console.print(Panel(
+            f"Arquivo: {os.path.basename(arquivo)}\n"
+            f"Linhas: {len(df):,}\n"
+            f"Colunas de saída: {len(df_saida.columns)}\n\n"
+            f"[cyan]Mapeamento de cabeçalhos:[/cyan]\n{mapeamento}",
+            title="Resumo",
+            border_style="blue",
+        ))
+
+        if not inquirer.confirm(message="Processar e salvar?", default=True).execute():
+            self.console.print("[yellow]Operação cancelada.[/yellow]")
+            return
+
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar o arquivo:")
+        if not pasta_saida:
+            return
+
+        caminho_saida = self._salvar_arquivo_colunas_selecionadas(df_saida, arquivo, pasta_saida)
+
+        self.console.print(Panel(
+            f"[green]Arquivo gerado com sucesso![/green]\n\n"
+            f"Cabeçalhos finais: {', '.join(df_saida.columns)}\n"
+            f"Salvo em:\n{caminho_saida}",
+            title="Concluído",
+            border_style="green",
+        ))
+
+    def manter_colunas_selecionadas_lote(self):
+        """Mantém colunas selecionadas em lote (mesmos cabeçalhos em todos os arquivos)"""
+        self.console.print(Panel(
+            "[bold cyan]Manter Colunas Selecionadas (Lote)[/bold cyan]\n"
+            "Usa o primeiro arquivo da pasta para escolher os cabeçalhos.\n"
+            "Aplica a mesma seleção em todos os CSV/XLSX da pasta.",
+            title="Extrair Colunas em Lote",
+            border_style="cyan",
+        ))
+
+        pasta_entrada = self.selecionar_pasta("Selecione a pasta com os arquivos de entrada:")
+        if not pasta_entrada:
+            return
+
+        extensoes = ('.csv', '.xlsx')
+        arquivos = sorted([
+            os.path.join(pasta_entrada, f)
+            for f in os.listdir(pasta_entrada)
+            if f.lower().endswith(extensoes)
+        ])
+
+        if not arquivos:
+            self.console.print(Panel(
+                "[red]Nenhum arquivo CSV ou XLSX encontrado na pasta![/red]",
+                border_style="red",
+            ))
+            return
+
+        try:
+            df_exemplo = self.carregar_arquivo(arquivos[0])
+        except Exception as e:
+            self.console.print(Panel(f"[red]Erro ao carregar primeiro arquivo:[/red]\n\n{e}", border_style="red"))
+            return
+
+        colunas_escolhidas = selecionar_colunas(
+            df_exemplo,
+            f"Selecione as colunas (base: {os.path.basename(arquivos[0])}):",
+        )
+        if not colunas_escolhidas:
+            self.console.print("[yellow]Nenhuma coluna selecionada.[/yellow]")
+            return
+
+        nomes_saida = gerar_nomes_colunas_alfabeticas(len(colunas_escolhidas))
+        self.console.print(Panel(
+            f"Pasta entrada: {pasta_entrada}\n"
+            f"Arquivos: {len(arquivos)}\n"
+            f"Colunas mantidas: {', '.join(colunas_escolhidas)}\n"
+            f"Cabeçalhos de saída: {', '.join(nomes_saida)}",
+            title="Resumo",
+            border_style="blue",
+        ))
+
+        if not inquirer.confirm(
+            message=f"Processar {len(arquivos)} arquivo(s)?",
+            default=True,
+        ).execute():
+            self.console.print("[yellow]Operação cancelada.[/yellow]")
+            return
+
+        pasta_saida = self.selecionar_pasta_saida("Selecione a pasta para salvar os arquivos:")
+        if not pasta_saida:
+            return
+
+        processados = []
+        erros = []
+        avisos = []
+
+        self.console.print("\n[bold cyan]Processando arquivos...[/bold cyan]")
+
+        for i, caminho in enumerate(arquivos, 1):
+            nome = os.path.basename(caminho)
+            self.console.print(f"[blue]{i}/{len(arquivos)}: {nome}[/blue]")
+            try:
+                df = self.carregar_arquivo(caminho)
+                colunas_ausentes = [c for c in colunas_escolhidas if c not in df.columns]
+                if colunas_ausentes:
+                    avisos.append(f"{nome}: colunas ausentes — {', '.join(colunas_ausentes)}")
+                df_saida = extrair_colunas_com_cabecalho_alfabetico(df, colunas_escolhidas)
+                caminho_salvo = self._salvar_arquivo_colunas_selecionadas(
+                    df_saida, caminho, pasta_saida
+                )
+                processados.append(caminho_salvo)
+            except Exception as e:
+                erros.append(f"{nome}: {e}")
+
+        mensagem = f"[green]Processados com sucesso: {len(processados)}[/green]\n"
+        if avisos:
+            mensagem += f"\n[yellow]Avisos ({len(avisos)}):[/yellow]\n" + "\n".join(f"• {a}" for a in avisos)
+        if erros:
+            mensagem += f"\n[red]Erros ({len(erros)}):[/red]\n" + "\n".join(f"• {e}" for e in erros)
+
+        self.console.print(Panel(mensagem, title="Lote Concluído", border_style="green" if not erros else "yellow"))
