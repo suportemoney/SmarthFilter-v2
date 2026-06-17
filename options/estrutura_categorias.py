@@ -130,6 +130,13 @@ ESTRUTURA_SISTEMA = {
                         modulo="dados.filtragem.filters.Filters.blacklist_cpf_pasta"
                     ),
                     OpcaoPrograma(
+                        id="whitelist_cpf_pasta",
+                        nome="Whitelist por CPF (Arquivos por Pasta)",
+                        descricao="Verifica os CPFs da pasta 1 que aparecem na pasta 2; se aparecer vai para whitelist, se não, para blacklist",
+                        executar=None,
+                        modulo="dados.filtragem.filters.Filters.whitelist_cpf_pasta"
+                    ),
+                    OpcaoPrograma(
                         id="repartir_por_coluna",
                         nome="Repartir por Coluna",
                         descricao="Divide arquivo em múltiplos arquivos baseado em valores de uma coluna",
@@ -226,6 +233,13 @@ ESTRUTURA_SISTEMA = {
                         descricao="Mesma extração de colunas por cabeçalho em todos os CSV/XLSX de uma pasta",
                         executar=None,
                         modulo="dados.filtragem.filters.Filters.manter_colunas_selecionadas_lote"
+                    ),
+                    OpcaoPrograma(
+                        id="extrair_identifier_como_cpf",
+                        nome="Extrair CPF da Coluna Identifier",
+                        descricao="Extrai a coluna 'identifier' dos CSVs de uma pasta, renomeia para CPF e salva na subpasta CPFs",
+                        executar=None,
+                        modulo="dados.filtragem.filters.Filters.extrair_identifier_como_cpf"
                     ),
                 ]
             ),

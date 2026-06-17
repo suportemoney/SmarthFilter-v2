@@ -56,11 +56,12 @@ class Filters:
             choices=[
                 Choice("1", name="Dividir arquivo em partes"),
                 Choice("2", name="Blacklist por CPF - Arquivos por Pasta"),
-                Choice("3", name="Repartir por coluna"),
-                Choice("4", name="Remover linhas com valores vazios/zero (arquivo único)"),
-                Choice("5", name="Remover linhas com valores vazios/zero (processamento em lote)"),
-                Choice("6", name="Adicionar coluna de idade baseada na data de nascimento"),
-                Choice("7", name="Voltar ao menu principal"),
+                Choice("3", name="Whitelist por CPF - Arquivos por Pasta"),
+                Choice("4", name="Repartir por coluna"),
+                Choice("5", name="Remover linhas com valores vazios/zero (arquivo único)"),
+                Choice("6", name="Remover linhas com valores vazios/zero (processamento em lote)"),
+                Choice("7", name="Adicionar coluna de idade baseada na data de nascimento"),
+                Choice("8", name="Voltar ao menu principal"),
             ],
         ).execute()
 
@@ -708,6 +709,226 @@ class Filters:
                 f"   └─ Blacklist: {stat['blacklist']:,}\n"
             )
         
+        self.console.print(Panel(
+            mensagem_final,
+            title="Relatório Final",
+            border_style="green"
+        ))
+
+    def whitelist_cpf_pasta(self):
+        """Processa whitelist de CPF por pasta de arquivos (Pasta 1 vs Pasta 2)"""
+        
+        # 1. Pedir caminho da pasta 1 (arquivos de dados a serem filtrados)
+        pasta_1 = self.selecionar_pasta("Selecione a pasta 1 (arquivos de dados a serem filtrados):")
+        
+        # Buscar arquivos na pasta 1 (suporta CSV e XLSX)
+        arquivos_pasta1 = glob.glob(os.path.join(pasta_1, "*.csv")) + glob.glob(os.path.join(pasta_1, "*.xlsx"))
+        
+        if not arquivos_pasta1:
+            self.console.print(Panel(
+                "[red]Nenhum arquivo CSV ou XLSX encontrado na pasta 1![/red]",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+            
+        self.console.print(Panel(
+            f"[green]Encontrados {len(arquivos_pasta1)} arquivos na pasta 1[/green]",
+            title="Arquivos Pasta 1",
+            border_style="green"
+        ))
+        
+        # 2. Pedir caminho da pasta 2 (arquivos com CPFs de referência)
+        pasta_2 = self.selecionar_pasta("Selecione a pasta 2 (arquivos com CPFs de referência):")
+        
+        # Buscar arquivos na pasta 2 (suporta CSV e XLSX)
+        arquivos_pasta2 = glob.glob(os.path.join(pasta_2, "*.csv")) + glob.glob(os.path.join(pasta_2, "*.xlsx"))
+        
+        if not arquivos_pasta2:
+            self.console.print(Panel(
+                "[red]Nenhum arquivo CSV ou XLSX encontrado na pasta 2![/red]",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+            
+        self.console.print(Panel(
+            f"[green]Encontrados {len(arquivos_pasta2)} arquivos na pasta 2[/green]",
+            title="Arquivos Pasta 2",
+            border_style="green"
+        ))
+        
+        # 3. Perguntar qual coluna dos arquivos da pasta 1 é a de CPF
+        try:
+            df_exemplo1 = self.carregar_arquivo(arquivos_pasta1[0])
+            coluna_cpf_pasta1 = self.selecionar_coluna(
+                df_exemplo1,
+                "Selecione a coluna que contém os CPFs na pasta 1:"
+            )
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao ler o primeiro arquivo da pasta 1:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+            
+        # 4. Perguntar qual coluna dos arquivos da pasta 2 é a de CPF
+        try:
+            df_exemplo2 = self.carregar_arquivo(arquivos_pasta2[0])
+            coluna_cpf_pasta2 = self.selecionar_coluna(
+                df_exemplo2,
+                "Selecione a coluna que contém os CPFs na pasta 2:"
+            )
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao ler o primeiro arquivo da pasta 2:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+            
+        # 5. Pedir caminho da pasta de saída
+        pasta_salvar = self.selecionar_pasta_saida("Selecione a pasta onde deseja salvar as pastas 'whitelist' e 'blacklist':")
+        
+        # Criar subpastas whitelist e blacklist
+        pasta_whitelist = os.path.join(pasta_salvar, "whitelist")
+        pasta_blacklist = os.path.join(pasta_salvar, "blacklist")
+        os.makedirs(pasta_whitelist, exist_ok=True)
+        os.makedirs(pasta_blacklist, exist_ok=True)
+        
+        self.console.print(Panel(
+            f"[green]Pastas de saída configuradas:[/green]\n"
+            f"├─ Whitelist: {pasta_whitelist}\n"
+            f"└─ Blacklist: {pasta_blacklist}",
+            title="Pastas de Saída",
+            border_style="green"
+        ))
+        
+        # Função local para normalizar CPF
+        def normalizar_cpf(cpf):
+            if pd.isna(cpf) or cpf == '' or str(cpf).strip() == '':
+                return ''
+            try:
+                cpf_str = str(cpf).strip()
+                # Remove todos os caracteres não numéricos
+                cpf_limpo = re.sub(r'\D', '', cpf_str)
+                if not cpf_limpo:
+                    return ''
+                # Preenche com zeros à esquerda até 11 dígitos
+                cpf_formatado = cpf_limpo.zfill(11)
+                # Pega apenas os 11 primeiros dígitos
+                return cpf_formatado[:11]
+            except:
+                return ''
+                
+        # 6. Carregar e normalizar todos os CPFs da pasta 2
+        self.console.print("[cyan]Carregando e normalizando CPFs de referência da pasta 2...[/cyan]")
+        cpfs_referencia = set()
+        
+        for arquivo in arquivos_pasta2:
+            try:
+                df_p2 = self.carregar_arquivo(arquivo)
+                if coluna_cpf_pasta2 not in df_p2.columns:
+                    self.console.print(f"[yellow]Aviso: O arquivo {os.path.basename(arquivo)} não possui a coluna '{coluna_cpf_pasta2}'. Ignorando...[/yellow]")
+                    continue
+                
+                # Normaliza os CPFs e adiciona ao set
+                cpfs_p2 = df_p2[coluna_cpf_pasta2].apply(normalizar_cpf)
+                cpfs_p2 = cpfs_p2[cpfs_p2 != ''].tolist()
+                cpfs_referencia.update(cpfs_p2)
+                self.console.print(f"[green]✓[/green] {os.path.basename(arquivo)} - {len(cpfs_p2):,} CPFs carregados")
+            except Exception as e:
+                self.console.print(f"[red]Erro ao processar arquivo {os.path.basename(arquivo)}: {str(e)}[/red]")
+                
+        total_cpfs_referencia = len(cpfs_referencia)
+        self.console.print(Panel(
+            f"[green]Total de CPFs de referência únicos carregados: {total_cpfs_referencia:,}[/green]",
+            title="Referência Carregada",
+            border_style="green"
+        ))
+        
+        # 7. Processar cada arquivo da pasta 1
+        self.console.print("\n[cyan]Processando arquivos da pasta 1...[/cyan]")
+        
+        arquivos_salvos = []
+        estatisticas = []
+        
+        for arquivo in arquivos_pasta1:
+            try:
+                nome_arquivo = os.path.basename(arquivo)
+                self.console.print(f"\n[cyan]Processando:[/cyan] {nome_arquivo}")
+                
+                df = self.carregar_arquivo(arquivo)
+                
+                if coluna_cpf_pasta1 not in df.columns:
+                    self.console.print(Panel(
+                        f"[red]Arquivo sem coluna '{coluna_cpf_pasta1}':[/red]\n{nome_arquivo}",
+                        title="Erro",
+                        border_style="red"
+                    ))
+                    continue
+                
+                # Normalizar CPFs temporariamente para a comparação
+                cpfs_normalizados = df[coluna_cpf_pasta1].apply(normalizar_cpf)
+                
+                # Separar whitelist e blacklist
+                # Se o CPF normalizado está no set de referência, vai para whitelist. Senão, blacklist.
+                mask_whitelist = cpfs_normalizados.isin(cpfs_referencia)
+                df_whitelist = df[mask_whitelist].copy()
+                df_blacklist = df[~mask_whitelist].copy()
+                
+                # Salvar arquivos whitelist e blacklist nas pastas específicas
+                arquivo_whitelist = self.salvar_arquivo_blacklist(
+                    df_whitelist, nome_arquivo, "whitelist", pasta_whitelist
+                )
+                arquivo_blacklist = self.salvar_arquivo_blacklist(
+                    df_blacklist, nome_arquivo, "blacklist", pasta_blacklist
+                )
+                
+                arquivos_salvos.extend([arquivo_whitelist, arquivo_blacklist])
+                
+                # Guardar estatísticas
+                estatisticas.append({
+                    'arquivo': nome_arquivo,
+                    'total': len(df),
+                    'whitelist': len(df_whitelist),
+                    'blacklist': len(df_blacklist)
+                })
+                
+                self.console.print(f"[green]✓[/green] Whitelist (presente na pasta 2): {len(df_whitelist):,} registros")
+                self.console.print(f"[green]✓[/green] Blacklist (não presente na pasta 2): {len(df_blacklist):,} registros")
+                
+            except Exception as e:
+                self.console.print(Panel(
+                    f"[red]Erro ao processar arquivo:[/red]\n{nome_arquivo}\n\nErro: {str(e)}",
+                    title="Erro",
+                    border_style="red"
+                ))
+                continue
+                
+        # 8. Mostrar relatório final
+        mensagem_final = (
+            f"[bold green]Processamento Concluído![/bold green]\n\n"
+            f"[cyan]Estatísticas Gerais:[/cyan]\n"
+            f"├─ Arquivos processados: {len(estatisticas)}\n"
+            f"├─ CPFs de referência (pasta 2): {total_cpfs_referencia:,}\n"
+            f"└─ Total de arquivos gerados: {len(arquivos_salvos)}\n\n"
+            f"[cyan]Localização dos arquivos:[/cyan]\n"
+            f"├─ Pasta Whitelist: {pasta_whitelist}\n"
+            f"└─ Pasta Blacklist: {pasta_blacklist}\n\n"
+            f"[cyan]Detalhes por arquivo:[/cyan]\n"
+        )
+        
+        for i, stat in enumerate(estatisticas):
+            prefixo = "└─" if i == len(estatisticas) - 1 else "├─"
+            mensagem_final += (
+                f"{prefixo} {stat['arquivo']}:\n"
+                f"   ├─ Total: {stat['total']:,}\n"
+                f"   ├─ Whitelist: {stat['whitelist']:,}\n"
+                f"   └─ Blacklist: {stat['blacklist']:,}\n"
+            )
+            
         self.console.print(Panel(
             mensagem_final,
             title="Relatório Final",
@@ -2270,12 +2491,14 @@ class Filters:
             elif opcao == "2":
                 self.blacklist_cpf_pasta()
             elif opcao == "3":
-                self.repartir_por_coluna()
+                self.whitelist_cpf_pasta()
             elif opcao == "4":
-                self.remover_linhas_vazias_arquivo_unico()
+                self.repartir_por_coluna()
             elif opcao == "5":
-                self.remover_linhas_vazias_em_lote()
+                self.remover_linhas_vazias_arquivo_unico()
             elif opcao == "6":
+                self.remover_linhas_vazias_em_lote()
+            elif opcao == "7":
                 self.adicionar_coluna_idade()
             else:
                 break
@@ -2593,3 +2816,85 @@ class Filters:
             mensagem += f"\n[red]Erros ({len(erros)}):[/red]\n" + "\n".join(f"• {e}" for e in erros)
 
         self.console.print(Panel(mensagem, title="Lote Concluído", border_style="green" if not erros else "yellow"))
+
+    def extrair_identifier_como_cpf(self):
+        """Extrai a coluna 'identifier' dos CSVs de uma pasta, renomeia para CPF e salva na subpasta CPFs"""
+        self.console.print(Panel(
+            "[bold cyan]Extrair CPF da Coluna Identifier[/bold cyan]\n"
+            "Processa todos os arquivos .csv de uma pasta.\n"
+            "Extrai apenas a coluna com cabeçalho 'identifier', renomeia para 'CPF'\n"
+            "e salva os arquivos na subpasta [bold]CPFs[/bold] dentro da pasta enviada.",
+            title="Extrair Identifier como CPF",
+            border_style="cyan",
+        ))
+
+        pasta_entrada = self.selecionar_pasta("Selecione a pasta com os arquivos CSV:")
+        if not pasta_entrada:
+            return
+
+        arquivos = sorted([
+            os.path.join(pasta_entrada, f)
+            for f in os.listdir(pasta_entrada)
+            if f.lower().endswith('.csv') and os.path.isfile(os.path.join(pasta_entrada, f))
+        ])
+
+        if not arquivos:
+            self.console.print(Panel(
+                "[red]Nenhum arquivo CSV encontrado na pasta![/red]",
+                border_style="red",
+            ))
+            return
+
+        pasta_saida = os.path.join(pasta_entrada, "CPFs")
+        os.makedirs(pasta_saida, exist_ok=True)
+
+        self.console.print(Panel(
+            f"Pasta de entrada: {pasta_entrada}\n"
+            f"Pasta de saída: {pasta_saida}\n"
+            f"Arquivos encontrados: {len(arquivos)}",
+            title="Resumo",
+            border_style="blue",
+        ))
+
+        if not inquirer.confirm(
+            message=f"Processar {len(arquivos)} arquivo(s)?",
+            default=True,
+        ).execute():
+            self.console.print("[yellow]Operação cancelada.[/yellow]")
+            return
+
+        processados = []
+        erros = []
+
+        self.console.print("\n[bold cyan]Processando arquivos...[/bold cyan]")
+
+        for i, caminho in enumerate(arquivos, 1):
+            nome = os.path.basename(caminho)
+            self.console.print(f"[blue]{i}/{len(arquivos)}: {nome}[/blue]")
+            try:
+                df = self.carregar_arquivo(caminho)
+                if 'identifier' not in df.columns:
+                    erros.append(f"{nome}: coluna 'identifier' não encontrada")
+                    continue
+
+                df_saida = df[['identifier']].copy()
+                df_saida.columns = ['CPF']
+                caminho_salvo = self._salvar_arquivo_colunas_selecionadas(
+                    df_saida, caminho, pasta_saida
+                )
+                processados.append(caminho_salvo)
+            except Exception as e:
+                erros.append(f"{nome}: {e}")
+
+        mensagem = (
+            f"[green]Processados com sucesso: {len(processados)}[/green]\n"
+            f"Pasta de saída: {pasta_saida}"
+        )
+        if erros:
+            mensagem += f"\n\n[red]Erros ({len(erros)}):[/red]\n" + "\n".join(f"• {e}" for e in erros)
+
+        self.console.print(Panel(
+            mensagem,
+            title="Concluído",
+            border_style="green" if not erros else "yellow",
+        ))
