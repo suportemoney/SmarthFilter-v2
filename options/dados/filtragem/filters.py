@@ -28,25 +28,33 @@ class Filters:
 
     def tratar_colunas_numericas(self, df):
         """Trata colunas numéricas que devem permanecer como string (telefones, CPFs, etc.)"""
-        # Lista de padrões de colunas que devem permanecer como string
-        padroes_string = [
+        # Substring: nomes longos o suficiente para não colidir (ex.: 'id' em 'idade')
+        padroes_substring = [
             'telefone', 'fone', 'phone', 'celular', 'mobile',
-            'cpf', 'cnpj', 'rg', 'cep', 'codigo', 'code',
-            'numero', 'num', 'id', 'identificador'
+            'cpf', 'cnpj', 'rg', 'cep', 'codigo',
+            'numero', 'identificador'
         ]
-        
+        # Padrões curtos: só como palavra inteira (evita 'id' em 'idade', 'num' em 'numero' já coberto acima)
+        padroes_palavra = ['id', 'num', 'code']
+
         for coluna in df.columns:
             coluna_lower = coluna.lower()
-            
+
             # Verifica se a coluna deve ser tratada como string
-            deve_ser_string = any(padrao in coluna_lower for padrao in padroes_string)
-            
+            deve_ser_string = any(padrao in coluna_lower for padrao in padroes_substring)
+            if not deve_ser_string:
+                deve_ser_string = any(
+                    re.search(rf'(^|_){re.escape(padrao)}(_|$)', coluna_lower)
+                    or coluna_lower == padrao
+                    for padrao in padroes_palavra
+                )
+
             if deve_ser_string:
                 # Converte para string e remove .0 desnecessários
                 df[coluna] = df[coluna].astype(str).str.replace('.0', '', regex=False)
                 # Remove 'nan' strings e substitui por vazio
                 df[coluna] = df[coluna].replace('nan', '', regex=False)
-        
+
         return df
 
     def menu_filters(self):
@@ -2058,8 +2066,11 @@ class Filters:
         caminho_saida = os.path.join(pasta_saida, nome_arquivo)
 
         try:
+            # Garante idades inválidas como NA e cast Int64 antes do tratamento de strings
+            df[coluna_idade] = pd.to_numeric(df[coluna_idade], errors='coerce').astype('Int64')
             df = self.tratar_colunas_numericas(df.copy())
-            df[coluna_idade] = df[coluna_idade].astype('Int64')
+            # Reaplica Int64 na coluna de idade (tratar pode ter tocado outras colunas)
+            df[coluna_idade] = pd.to_numeric(df[coluna_idade], errors='coerce').astype('Int64')
             df.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
             self.console.print(Panel(
                 f"[green]Arquivo salvo com sucesso![/green]\n"
