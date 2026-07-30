@@ -57,11 +57,12 @@ class Filters:
                 Choice("1", name="Dividir arquivo em partes"),
                 Choice("2", name="Blacklist por CPF - Arquivos por Pasta"),
                 Choice("3", name="Whitelist por CPF - Arquivos por Pasta"),
-                Choice("4", name="Repartir por coluna"),
-                Choice("5", name="Remover linhas com valores vazios/zero (arquivo único)"),
-                Choice("6", name="Remover linhas com valores vazios/zero (processamento em lote)"),
-                Choice("7", name="Adicionar coluna de idade baseada na data de nascimento"),
-                Choice("8", name="Voltar ao menu principal"),
+                Choice("4", name="Filtrar arquivo por CPF (Arquivo 1 x Arquivo 2)"),
+                Choice("5", name="Repartir por coluna"),
+                Choice("6", name="Remover linhas com valores vazios/zero (arquivo único)"),
+                Choice("7", name="Remover linhas com valores vazios/zero (processamento em lote)"),
+                Choice("8", name="Adicionar coluna de idade baseada na data de nascimento"),
+                Choice("9", name="Voltar ao menu principal"),
             ],
         ).execute()
 
@@ -931,6 +932,135 @@ class Filters:
             
         self.console.print(Panel(
             mensagem_final,
+            title="Relatório Final",
+            border_style="green"
+        ))
+
+    def filtrar_arquivo_por_cpf(self):
+        """Filtra o arquivo 1 por CPF com base na lista de CPFs do arquivo 2.
+        Gera dois arquivos na pasta escolhida:
+        - linhas do arquivo 1 cujo CPF aparece no arquivo 2
+        - linhas do arquivo 1 cujo CPF não aparece no arquivo 2
+        """
+        # 1. Seleciona arquivo 1 (dados a filtrar)
+        arquivo_1 = self.selecionar_arquivo("Selecione o arquivo 1 (dados a filtrar):")
+        try:
+            df1 = self.carregar_arquivo(arquivo_1)
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar o arquivo 1:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+
+        if len(df1) == 0:
+            self.console.print(Panel(
+                "[red]O arquivo 1 está vazio![/red]",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+
+        self.console.print(Panel(
+            f"[green]Arquivo 1 carregado![/green]\n"
+            f"Registros: {len(df1):,} | Colunas: {len(df1.columns)}",
+            title="Arquivo 1",
+            border_style="green"
+        ))
+
+        coluna_cpf_1 = self.selecionar_coluna(
+            df1,
+            "Selecione a coluna de CPF do arquivo 1:"
+        )
+
+        # 2. Seleciona arquivo 2 (lista de CPFs de referência)
+        arquivo_2 = self.selecionar_arquivo("Selecione o arquivo 2 (lista de CPFs):")
+        try:
+            df2 = self.carregar_arquivo(arquivo_2)
+        except Exception as e:
+            self.console.print(Panel(
+                f"[red]Erro ao carregar o arquivo 2:[/red]\n\nErro: {str(e)}",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+
+        if len(df2) == 0:
+            self.console.print(Panel(
+                "[red]O arquivo 2 está vazio![/red]",
+                title="Erro",
+                border_style="red"
+            ))
+            return
+
+        self.console.print(Panel(
+            f"[green]Arquivo 2 carregado![/green]\n"
+            f"Registros: {len(df2):,} | Colunas: {len(df2.columns)}",
+            title="Arquivo 2",
+            border_style="green"
+        ))
+
+        coluna_cpf_2 = self.selecionar_coluna(
+            df2,
+            "Selecione a coluna de CPF do arquivo 2:"
+        )
+
+        # 3. Pasta de saída (antes do processamento, para já poder salvar)
+        pasta_saida = self.selecionar_pasta_saida(
+            "Selecione a pasta onde deseja salvar os dois arquivos:"
+        )
+        os.makedirs(pasta_saida, exist_ok=True)
+
+        # Normaliza CPF (só dígitos, 11 posições)
+        def normalizar_cpf(cpf):
+            if pd.isna(cpf) or cpf == '' or str(cpf).strip() == '':
+                return ''
+            try:
+                cpf_limpo = re.sub(r'\D', '', str(cpf).strip())
+                if not cpf_limpo:
+                    return ''
+                return cpf_limpo.zfill(11)[:11]
+            except Exception:
+                return ''
+
+        # 4. Monta set de CPFs do arquivo 2
+        self.console.print("[cyan]Normalizando CPFs do arquivo 2...[/cyan]")
+        cpfs_arquivo2 = set(
+            cpf for cpf in df2[coluna_cpf_2].apply(normalizar_cpf).tolist() if cpf
+        )
+        self.console.print(Panel(
+            f"[green]CPFs únicos no arquivo 2: {len(cpfs_arquivo2):,}[/green]",
+            title="Lista de Referência",
+            border_style="green"
+        ))
+
+        # 5. Filtra arquivo 1
+        self.console.print("[cyan]Filtrando arquivo 1...[/cyan]")
+        cpfs_norm_1 = df1[coluna_cpf_1].apply(normalizar_cpf)
+        mask_presente = cpfs_norm_1.isin(cpfs_arquivo2)
+
+        df_presente = df1[mask_presente].copy()
+        df_ausente = df1[~mask_presente].copy()
+
+        nome_original = os.path.basename(arquivo_1)
+        caminho_presente = self.salvar_arquivo_blacklist(
+            df_presente, nome_original, "presente_arquivo2", pasta_saida
+        )
+        caminho_ausente = self.salvar_arquivo_blacklist(
+            df_ausente, nome_original, "ausente_arquivo2", pasta_saida
+        )
+
+        self.console.print(Panel(
+            f"[bold green]Processamento concluído![/bold green]\n\n"
+            f"[cyan]Estatísticas:[/cyan]\n"
+            f"├─ Total arquivo 1: {len(df1):,}\n"
+            f"├─ Presentes no arquivo 2: {len(df_presente):,}\n"
+            f"├─ Ausentes no arquivo 2: {len(df_ausente):,}\n"
+            f"└─ CPFs únicos no arquivo 2: {len(cpfs_arquivo2):,}\n\n"
+            f"[cyan]Arquivos gerados:[/cyan]\n"
+            f"├─ {caminho_presente}\n"
+            f"└─ {caminho_ausente}",
             title="Relatório Final",
             border_style="green"
         ))
@@ -2493,12 +2623,14 @@ class Filters:
             elif opcao == "3":
                 self.whitelist_cpf_pasta()
             elif opcao == "4":
-                self.repartir_por_coluna()
+                self.filtrar_arquivo_por_cpf()
             elif opcao == "5":
-                self.remover_linhas_vazias_arquivo_unico()
+                self.repartir_por_coluna()
             elif opcao == "6":
-                self.remover_linhas_vazias_em_lote()
+                self.remover_linhas_vazias_arquivo_unico()
             elif opcao == "7":
+                self.remover_linhas_vazias_em_lote()
+            elif opcao == "8":
                 self.adicionar_coluna_idade()
             else:
                 break

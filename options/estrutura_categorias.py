@@ -137,6 +137,13 @@ ESTRUTURA_SISTEMA = {
                         modulo="dados.filtragem.filters.Filters.whitelist_cpf_pasta"
                     ),
                     OpcaoPrograma(
+                        id="filtrar_arquivo_por_cpf",
+                        nome="Filtrar Arquivo por CPF (Arquivo 1 x Arquivo 2)",
+                        descricao="Separa o arquivo 1 em dois: CPFs que aparecem no arquivo 2 e CPFs que não aparecem",
+                        executar=None,
+                        modulo="dados.filtragem.filters.Filters.filtrar_arquivo_por_cpf"
+                    ),
+                    OpcaoPrograma(
                         id="repartir_por_coluna",
                         nome="Repartir por Coluna",
                         descricao="Divide arquivo em múltiplos arquivos baseado em valores de uma coluna",
